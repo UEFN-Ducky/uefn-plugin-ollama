@@ -17,10 +17,26 @@ from backend.agent.providers.cache_utils import openai_system_messages, parse_op
 from backend.agent.providers.thinking import ThinkSplitter, reasoning_from_delta
 
 
+def _think_extra(thinking_effort: str) -> dict[str, Any]:
+    """Map Ducky thinking_effort → Ollama ``think`` (qwen3 / thinking models)."""
+    from backend.agent.thinking_effort import normalize_thinking_effort
+
+    effort = normalize_thinking_effort(thinking_effort)
+    if effort in ("", "off"):
+        return {"think": False}
+    if effort == "low":
+        return {"think": "low"}
+    if effort == "high":
+        return {"think": "high"}
+    # medium / on
+    return {"think": True}
+
+
 class OllamaProvider:
-    def __init__(self, base_url: str, model: str) -> None:
+    def __init__(self, base_url: str, model: str, *, thinking_effort: str = "off") -> None:
         self._base_url = base_url
         self._model = model
+        self._thinking_effort = thinking_effort or "off"
 
     def _client(self):
         from openai import OpenAI
@@ -86,6 +102,11 @@ class OllamaProvider:
         cancelled = False
         splitter = ThinkSplitter()
 
+        extra_body: dict[str, Any] = {
+            "keep_alive": "15m",
+            "options": {"keep_alive": "15m"},
+            **_think_extra(self._thinking_effort),
+        }
         create_kwargs: dict[str, Any] = {
             "model": self._model,
             "messages": self._to_openai_messages(system, messages, cache=cache),
@@ -95,7 +116,9 @@ class OllamaProvider:
             # instead of unloading after Ollama's 5-minute default. Sent both at
             # top level and nested under `options` since different Ollama
             # versions honor one or the other on the OpenAI-compat endpoint.
-            "extra_body": {"keep_alive": "15m", "options": {"keep_alive": "15m"}},
+            # ``think`` disables/enables reasoning for qwen3-style thinking models
+            # so the visible reply is not empty when effort is off.
+            "extra_body": extra_body,
         }
 
         stream = client.chat.completions.create(**create_kwargs)
@@ -167,6 +190,7 @@ class OllamaProvider:
                 model=self._model,
                 max_tokens=8,
                 messages=[{"role": "user", "content": "ping"}],
+                extra_body={"think": False},
             )
             _ = r.choices[0].message.content
             return True, "Ollama OK"
