@@ -135,11 +135,17 @@ class OllamaProvider:
         cancelled = False
         splitter = ThinkSplitter()
 
-        options: dict[str, Any] = {"keep_alive": "15m"}
         num_ctx = _num_ctx(self._base_url, self._model)
-        if num_ctx is not None:
-            # Exact window from the model API — do not invent floors/ceilings.
-            options["num_ctx"] = num_ctx
+        if num_ctx is None:
+            yield StreamEvent(
+                kind=StreamEventKind.ERROR,
+                error=(
+                    f"Ollama model {self._model!r} has no context_length from /api/show "
+                    "(or model catalog). Refresh models in Settings → LLMs; refuse to guess a window."
+                ),
+            )
+            return
+        options: dict[str, Any] = {"keep_alive": "15m", "num_ctx": num_ctx}
         extra_body: dict[str, Any] = {
             "keep_alive": "15m",
             "options": options,
