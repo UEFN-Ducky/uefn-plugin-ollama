@@ -32,32 +32,25 @@ def _think_extra(thinking_effort: str) -> dict[str, Any]:
     return {"think": True}
 
 
-def _num_ctx(base_url: str, model: str) -> int:
-    """Context window for this model — Ollama defaults to ~16k unless num_ctx is set.
-
-    Ducky's agent system + tools + images often exceed 16k; without this, turns
-    die with exceed_context_size_error and the UI shows empty Done.
-    """
+def _num_ctx(base_url: str, model: str) -> int | None:
+    """Model context from Ollama ``/api/show`` (or catalog cache). Never invent a size."""
     reported = 0
     try:
-        from backend.agent.model_fetch import get_model_info
+        from .model_fetch import ollama_model_info
 
-        info = get_model_info("ollama", model)
-        if info and info.context_limit:
-            reported = int(info.context_limit)
+        reported = int(ollama_model_info(base_url, model).get("context_length") or 0)
     except Exception:
         reported = 0
     if reported <= 0:
         try:
-            from .model_fetch import ollama_model_info
+            from backend.agent.model_fetch import get_model_info
 
-            reported = int(ollama_model_info(base_url, model).get("context_length") or 0)
+            info = get_model_info("ollama", model)
+            if info and info.context_limit:
+                reported = int(info.context_limit)
         except Exception:
             reported = 0
-    # Floor 32k (agent prompts), ceil 128k (VRAM safety for large local models).
-    if reported <= 0:
-        reported = 32768
-    return max(32768, min(reported, 131072))
+    return reported if reported > 0 else None
 
 
 def _friendly_ollama_error(exc: BaseException) -> str:
@@ -142,10 +135,14 @@ class OllamaProvider:
         cancelled = False
         splitter = ThinkSplitter()
 
+        options: dict[str, Any] = {"keep_alive": "15m"}
         num_ctx = _num_ctx(self._base_url, self._model)
+        if num_ctx is not None:
+            # Exact window from the model API — do not invent floors/ceilings.
+            options["num_ctx"] = num_ctx
         extra_body: dict[str, Any] = {
             "keep_alive": "15m",
-            "options": {"keep_alive": "15m", "num_ctx": num_ctx},
+            "options": options,
             **_think_extra(self._thinking_effort),
         }
         create_kwargs: dict[str, Any] = {
@@ -159,7 +156,7 @@ class OllamaProvider:
             # versions honor one or the other on the OpenAI-compat endpoint.
             # ``think`` disables/enables reasoning for qwen3-style thinking models
             # so the visible reply is not empty when effort is off.
-            # ``num_ctx`` overrides Ollama's ~16k default so agent prompts fit.
+            # ``num_ctx`` = model ``context_length`` from /api/show when known.
             "extra_body": extra_body,
         }
 
