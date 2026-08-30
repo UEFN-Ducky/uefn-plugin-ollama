@@ -12,7 +12,10 @@ from pathlib import Path
 from typing import Any, AsyncIterator
 
 from backend.agent.multimodal_content import build_openai_user_content
-from .ollama_url import ollama_openai_base_url
+try:
+    from .ollama_url import ollama_openai_base_url
+except ImportError:
+    from ollama_url import ollama_openai_base_url
 from backend.agent.providers.base import (
     ProviderMessage,
     StreamEvent,

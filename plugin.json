@@ -1,9 +1,9 @@
 {
   "id": "ollama",
   "kind": "plugin",
-  "version": "1.0.20",
+  "version": "1.0.23",
   "label": "Ollama",
-  "description": "Local Ollama gateway for Settings \u2192 LLMs. Point at your Ollama server URL (default http://localhost:11434). Install from Store \u2192 Gateways, then enable to show the Ollama row under Providers & Keys.",
+  "description": "Local Ollama gateway for Settings → LLMs. Point at your Ollama server URL (default http://localhost:11434). Install from Store → Gateways, then enable to show the Ollama row under Providers & Keys.",
   "min_app_version": "1.0.523",
   "default_enabled": true,
   "secret_keys": [
@@ -29,7 +29,7 @@
         {
           "target": "settings.llms.section.llms",
           "title": "Providers & Keys",
-          "body": "Ollama lives under Settings \u2192 LLMs. Open Providers & Keys to set your local Ollama URL (default http://localhost:11434).",
+          "body": "Ollama lives under Settings → LLMs. Open Providers & Keys to set your local Ollama URL (default http://localhost:11434).",
           "advance": "require_click",
           "mode": "rect"
         }
