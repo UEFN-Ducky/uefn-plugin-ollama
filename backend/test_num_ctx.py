@@ -1,12 +1,13 @@
-"""Unit tests for Ollama num_ctx bucketing + ratchet (no Ollama server needed)."""
+"""num_ctx is detected from the prompt + /api/show max — no slider ladder."""
 
 from __future__ import annotations
 
 from .ollama_provider import (
+    _HEADROOM_TOKENS,
     _IMAGE_TOKENS_EACH,
     _attachment_tokens,
-    _bucket_num_ctx,
     _estimate_prompt_tokens,
+    _needed_num_ctx,
     _ratcheted_num_ctx,
     clear_num_ctx_ratchet,
 )
@@ -26,22 +27,21 @@ class _Msg:
         self.tool_calls = tool_calls or []
 
 
-def test_bucket_picks_smallest_fit():
-    assert _bucket_num_ctx(262_144, 20_000) == 32_768
-    assert _bucket_num_ctx(262_144, 40_000) == 65_536
-    assert _bucket_num_ctx(262_144, 100_000) == 131_072
-    assert _bucket_num_ctx(262_144, 200_000) == 262_144
-    assert _bucket_num_ctx(32_768, 40_000) == 32_768
+def test_needed_is_prompt_plus_headroom_capped_at_model():
+    assert _needed_num_ctx(262_144, 20_000) == 20_000 + _HEADROOM_TOKENS
+    assert _needed_num_ctx(262_144, 40_000) == 40_000 + _HEADROOM_TOKENS
+    assert _needed_num_ctx(32_768, 40_000) == 32_768
+    assert _needed_num_ctx(262_144, 300_000) == 262_144
 
 
 def test_ratchet_never_shrinks():
     clear_num_ctx_ratchet()
     a = _ratcheted_num_ctx("http://localhost:11434", "m", 262_144, 20_000)
-    assert a == 32_768
+    assert a == 20_000 + _HEADROOM_TOKENS
     b = _ratcheted_num_ctx("http://localhost:11434", "m", 262_144, 1_000)
-    assert b == 32_768  # still pinned
+    assert b == a
     c = _ratcheted_num_ctx("http://localhost:11434", "m", 262_144, 40_000)
-    assert c == 65_536
+    assert c == 40_000 + _HEADROOM_TOKENS
 
 
 def test_estimate_counts_images():

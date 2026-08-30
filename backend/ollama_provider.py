@@ -46,9 +46,10 @@ _ENABLE_PROGRESS_POLL = os.environ.get("DUCKY_OLLAMA_PROGRESS_POLL", "").strip()
     "yes",
 )
 
-# Fixed buckets only — exact per-turn sizes thrash Ollama's runner (reload on
-# every options change). Ratchet upward per (base_url, model) for the process.
-_CTX_BUCKETS = (16_384, 32_768, 65_536, 131_072)
+# num_ctx = this turn's prompt estimate + headroom, capped at /api/show
+# context_length. Ratchet up per (url, model) so we do not shrink/reload.
+# No slider, no 16/32/64/128/256k ladder — Ollama Desktop's context slider
+# is ignored; we send the size this prompt actually needs.
 _HEADROOM_TOKENS = 4_096
 _IMAGE_TOKENS_EACH = 1_600
 # Stay loaded while the Ollama server is up (15m idle used to cold-reload).
@@ -59,18 +60,24 @@ _num_ctx_ratchet: dict[str, int] = {}
 
 
 def _think_extra(thinking_effort: str) -> dict[str, Any]:
-    """Map Ducky thinking_effort → Ollama ``think`` (qwen3 / thinking models)."""
+    """Map Ducky thinking_effort → Ollama ``/v1`` ``reasoning_effort``.
+
+    Native ``/api/chat`` uses ``think`` (bool or low|medium|high|max).
+    ``/v1/chat/completions`` wants ``reasoning_effort``
+    (none|low|medium|high|max). A bool ``think`` on /v1 is a 400.
+    Default ``none`` so qwen3.6 tool-calls like OpenAI instead of thinking
+    first and stopping.
+    """
     from backend.agent.thinking_effort import normalize_thinking_effort
 
     effort = normalize_thinking_effort(thinking_effort)
     if effort in ("", "off"):
-        return {"think": False}
+        return {"reasoning_effort": "none"}
     if effort == "low":
-        return {"think": "low"}
+        return {"reasoning_effort": "low"}
     if effort == "high":
-        return {"think": "high"}
-    # medium / on
-    return {"think": True}
+        return {"reasoning_effort": "high"}
+    return {"reasoning_effort": "medium"}
 
 
 def _num_ctx(base_url: str, model: str) -> int | None:
@@ -192,7 +199,7 @@ def _estimate_prompt_tokens(
     messages: list[ProviderMessage],
     tools: list[dict[str, Any]],
 ) -> int:
-    """Rough token estimate for progress + num_ctx bucketing (includes images)."""
+    """Rough token estimate for progress + num_ctx (includes images)."""
     tokens = _chars_to_tokens(len(system or ""))
     for m in messages:
         tokens += _chars_to_tokens(len(m.content or ""))
@@ -208,31 +215,25 @@ def _estimate_prompt_tokens(
             blob = json.dumps(tools, default=str)
         except Exception:
             blob = "x" * (2048 * len(tools))
-        tokens += _chars_to_tokens(len(blob), dense=True)
+        # Tool JSON tokenizes tighter than prose; //6 matches observed Ollama counts.
+        tokens += max(1, len(blob) // 6)
     return max(1, tokens)
 
 
-def _bucket_num_ctx(model_max: int, need: int) -> int:
-    """Smallest fixed bucket >= need, else model_max. Never invent sizes between buckets."""
+def _needed_num_ctx(model_max: int, prompt_est: int) -> int:
+    """Prompt + headroom, never above the model's /api/show context_length."""
     max_ctx = max(1, int(model_max))
-    need = max(1, int(need))
-    buckets = [b for b in _CTX_BUCKETS if b <= max_ctx]
-    if max_ctx not in buckets:
-        buckets = list(buckets) + [max_ctx]
-    for b in buckets:
-        if b >= need:
-            return b
-    return buckets[-1]
+    need = max(1, int(prompt_est) + _HEADROOM_TOKENS)
+    return min(need, max_ctx)
 
 
 def _ratcheted_num_ctx(base_url: str, model: str, model_max: int, prompt_est: int) -> int:
-    """Pin bucket per (url, model); only grow so consecutive turns do not reload."""
-    need = int(prompt_est) + _HEADROOM_TOKENS
-    bucket = _bucket_num_ctx(model_max, need)
+    """Grow-only pin per (url, model) so a smaller follow-up does not reload."""
+    needed = _needed_num_ctx(model_max, prompt_est)
     key = f"{(base_url or '').rstrip('/')}|{(model or '').strip()}"
     with _ratchet_lock:
         prev = int(_num_ctx_ratchet.get(key) or 0)
-        chosen = max(prev, bucket) if prev > 0 else bucket
+        chosen = max(prev, needed) if prev > 0 else needed
         chosen = min(chosen, max(1, int(model_max)))
         _num_ctx_ratchet[key] = chosen
         return chosen
@@ -334,8 +335,6 @@ class OllamaProvider:
                 ),
             )
             return
-        # Estimate BEFORE options — buckets + ratchet need it; never allocate model_max
-        # (often 262k) when the turn only needs ~32–65k (forces GPU→CPU offload).
         prompt_token_est = _estimate_prompt_tokens(system, messages, tools or [])
         num_ctx = _ratcheted_num_ctx(self._base_url, self._model, model_max, prompt_token_est)
         options: dict[str, Any] = {"num_ctx": num_ctx}
@@ -350,8 +349,9 @@ class OllamaProvider:
             "messages": self._to_openai_messages(system, messages, cache=cache),
             "tools": tools if tools else None,
             "stream": True,
-            # ``num_ctx`` = ratcheted bucket (16k/32k/65k/131k/model_max), not raw
-            # model context_length. ``think`` maps Ducky thinking_effort for qwen3.
+            "stream_options": {"include_usage": True},
+            # ``num_ctx`` = detected prompt size, capped at /api/show.
+            # ``reasoning_effort`` is the /v1 thinking control.
             "extra_body": extra_body,
         }
 
@@ -369,12 +369,16 @@ class OllamaProvider:
         # Set DUCKY_OLLAMA_PROGRESS_POLL=1 for slow incremental log % updates.
         event_q: queue.Queue[tuple[str, Any]] = queue.Queue()
         stop_progress = threading.Event()
+        # First-token `stop_progress` only kills the optional % poller.
+        # The reader used to watch that same event — qwen thinking's first
+        # token ("The") aborted the HTTP stream and Ollama logged `cancel task`.
+        stop_reader = threading.Event()
 
         def _reader() -> None:
             try:
                 stream = client.chat.completions.create(**create_kwargs)
                 for chunk in stream:
-                    if stop_progress.is_set():
+                    if stop_reader.is_set():
                         break
                     event_q.put(("chunk", chunk))
                 event_q.put(("end", None))
@@ -415,6 +419,7 @@ class OllamaProvider:
             while True:
                 if cancel_event is not None and getattr(cancel_event, "is_set", lambda: False)():
                     cancelled = True
+                    stop_reader.set()
                     stop_progress.set()
                     try:
                         client.close()
@@ -532,7 +537,7 @@ class OllamaProvider:
                 model=self._model,
                 max_tokens=8,
                 messages=[{"role": "user", "content": "ping"}],
-                extra_body={"think": False},
+                extra_body={"reasoning_effort": "none"},
             )
             _ = r.choices[0].message.content
             return True, "Ollama OK"

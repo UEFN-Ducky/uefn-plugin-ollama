@@ -34,5 +34,6 @@ def register(api) -> None:
         normalize_secret=_normalize_secret,
         clear_model_cache=clear_model_cache,
         cache_mode="local",
+        shows_thinking_effort=True,
     )
     api.log("Ollama gateway contribution active (Providers)")
