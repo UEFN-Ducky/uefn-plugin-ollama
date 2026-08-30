@@ -1,4 +1,4 @@
-"""num_ctx is detected from the prompt + /api/show max — no slider ladder."""
+"""num_ctx is pinned once from host high-water + headroom — never resized mid-chat."""
 
 from __future__ import annotations
 
@@ -7,8 +7,7 @@ from .ollama_provider import (
     _IMAGE_TOKENS_EACH,
     _attachment_tokens,
     _estimate_prompt_tokens,
-    _needed_num_ctx,
-    _ratcheted_num_ctx,
+    _pinned_num_ctx,
     clear_num_ctx_ratchet,
 )
 
@@ -27,21 +26,23 @@ class _Msg:
         self.tool_calls = tool_calls or []
 
 
-def test_needed_is_prompt_plus_headroom_capped_at_model():
-    assert _needed_num_ctx(262_144, 20_000) == 20_000 + _HEADROOM_TOKENS
-    assert _needed_num_ctx(262_144, 40_000) == 40_000 + _HEADROOM_TOKENS
-    assert _needed_num_ctx(32_768, 40_000) == 32_768
-    assert _needed_num_ctx(262_144, 300_000) == 262_144
+def test_pin_matches_host_high_water():
+    from backend.agent.context_memory import epoch_num_ctx
 
-
-def test_ratchet_never_shrinks():
     clear_num_ctx_ratchet()
-    a = _ratcheted_num_ctx("http://localhost:11434", "m", 262_144, 20_000)
-    assert a == 20_000 + _HEADROOM_TOKENS
-    b = _ratcheted_num_ctx("http://localhost:11434", "m", 262_144, 1_000)
+    pinned = _pinned_num_ctx("http://localhost:11434", "m", 32_768)
+    assert pinned == epoch_num_ctx(32_768)
+    assert pinned <= 32_768
+    assert pinned >= 1000 + _HEADROOM_TOKENS or pinned == 32_768
+
+
+def test_pin_never_resizes():
+    clear_num_ctx_ratchet()
+    a = _pinned_num_ctx("http://localhost:11434", "m", 262_144)
+    b = _pinned_num_ctx("http://localhost:11434", "m", 262_144)
     assert b == a
-    c = _ratcheted_num_ctx("http://localhost:11434", "m", 262_144, 40_000)
-    assert c == 40_000 + _HEADROOM_TOKENS
+    c = _pinned_num_ctx("http://localhost:11434", "other", 8_192)
+    assert c == 8_192 or c <= 8_192
 
 
 def test_estimate_counts_images():

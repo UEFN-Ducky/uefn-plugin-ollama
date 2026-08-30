@@ -46,10 +46,9 @@ _ENABLE_PROGRESS_POLL = os.environ.get("DUCKY_OLLAMA_PROGRESS_POLL", "").strip()
     "yes",
 )
 
-# num_ctx = this turn's prompt estimate + headroom, capped at /api/show
-# context_length. Ratchet up per (url, model) so we do not shrink/reload.
-# No slider, no 16/32/64/128/256k ladder — Ollama Desktop's context slider
-# is ignored; we send the size this prompt actually needs.
+# num_ctx = host epoch high-water + output headroom, capped at /api/show
+# context_length. Pinned once per (url, model) — never resize mid-chat
+# (a resize drops the KV cache). No slider, no 16/32/64/128/256k ladder.
 _HEADROOM_TOKENS = 4_096
 _IMAGE_TOKENS_EACH = 1_600
 # Stay loaded while the Ollama server is up (15m idle used to cold-reload).
@@ -220,21 +219,21 @@ def _estimate_prompt_tokens(
     return max(1, tokens)
 
 
-def _needed_num_ctx(model_max: int, prompt_est: int) -> int:
-    """Prompt + headroom, never above the model's /api/show context_length."""
-    max_ctx = max(1, int(model_max))
-    need = max(1, int(prompt_est) + _HEADROOM_TOKENS)
-    return min(need, max_ctx)
-
-
-def _ratcheted_num_ctx(base_url: str, model: str, model_max: int, prompt_est: int) -> int:
-    """Grow-only pin per (url, model) so a smaller follow-up does not reload."""
-    needed = _needed_num_ctx(model_max, prompt_est)
+def _pinned_num_ctx(base_url: str, model: str, model_max: int) -> int:
+    """Allocate num_ctx once from host high-water + headroom; never resize mid-chat."""
     key = f"{(base_url or '').rstrip('/')}|{(model or '').strip()}"
+    max_ctx = max(1, int(model_max))
     with _ratchet_lock:
         prev = int(_num_ctx_ratchet.get(key) or 0)
-        chosen = max(prev, needed) if prev > 0 else needed
-        chosen = min(chosen, max(1, int(model_max)))
+        if prev > 0:
+            return min(prev, max_ctx)
+        try:
+            from backend.agent.context_memory import epoch_num_ctx
+
+            chosen = epoch_num_ctx(max_ctx)
+        except Exception:
+            chosen = min(max_ctx, 80_000 + _HEADROOM_TOKENS)
+        chosen = min(max(1, int(chosen)), max_ctx)
         _num_ctx_ratchet[key] = chosen
         return chosen
 
@@ -336,7 +335,7 @@ class OllamaProvider:
             )
             return
         prompt_token_est = _estimate_prompt_tokens(system, messages, tools or [])
-        num_ctx = _ratcheted_num_ctx(self._base_url, self._model, model_max, prompt_token_est)
+        num_ctx = _pinned_num_ctx(self._base_url, self._model, model_max)
         options: dict[str, Any] = {"num_ctx": num_ctx}
         extra_body: dict[str, Any] = {
             # -1 = keep loaded for the life of the Ollama server (avoid 15m idle reload).
@@ -350,10 +349,13 @@ class OllamaProvider:
             "tools": tools if tools else None,
             "stream": True,
             "stream_options": {"include_usage": True},
-            # ``num_ctx`` = detected prompt size, capped at /api/show.
+            # ``num_ctx`` pinned at chat start from host high-water + headroom.
             # ``reasoning_effort`` is the /v1 thinking control.
             "extra_body": extra_body,
         }
+        cache_key = (getattr(cache, "prompt_cache_key", "") if cache else "") or ""
+        if cache_key:
+            create_kwargs["prompt_cache_key"] = cache_key
 
         yield StreamEvent(
             kind=StreamEventKind.STATUS,
