@@ -57,22 +57,13 @@ def ollama_model_info(base_url: str, model: str) -> dict[str, Any]:
     return info
 
 
-def _ollama_info_from_show(base_url: str, model_id: str) -> ModelInfo:
-    info = ollama_model_info(base_url, model_id)
-    caps = info.get("capabilities") or []
-    return ModelInfo(
-        id=model_id,
-        display_name=model_id,
-        supports_vision="vision" in caps,
-        supports_tools="tools" in caps,
-        context_limit=info.get("context_length"),
-        price_in=0.0,
-        price_out=0.0,
-        is_local=True,
-    )
-
-
 def _fetch_ollama(base_url: str) -> list[ModelInfo]:
+    """List pulled models from /api/tags only.
+
+    /api/show per name used to run on Test & Save (10s each) and left the
+    picker empty until that finished. Caps/context still come from
+    ollama_model_info when a chat actually needs them.
+    """
     import httpx
 
     from .ollama_url import normalize_ollama_base
@@ -83,8 +74,20 @@ def _fetch_ollama(base_url: str) -> list[ModelInfo]:
     models: list[ModelInfo] = []
     for item in r.json().get("models", []):
         name = (item.get("name") or "").strip()
-        if name:
-            models.append(_ollama_info_from_show(base, name))
+        if not name:
+            continue
+        # ponytail: tags has no capabilities; assume tools so Settings pickers
+        # show the row. Upgrade: fill from /api/show in the background.
+        models.append(
+            ModelInfo(
+                id=name,
+                display_name=name,
+                supports_tools=True,
+                price_in=0.0,
+                price_out=0.0,
+                is_local=True,
+            )
+        )
     models.sort(key=lambda m: m.id, reverse=True)
     return models
 
