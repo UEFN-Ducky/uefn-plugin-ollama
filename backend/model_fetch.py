@@ -86,6 +86,7 @@ def _fetch_ollama(base_url: str) -> list[ModelInfo]:
                 price_in=0.0,
                 price_out=0.0,
                 is_local=True,
+                supports_thinking_effort=True,
             )
         )
     models.sort(key=lambda m: m.id, reverse=True)
