@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import fields
 from typing import Any
 
 from backend.agent.model_fetch import ModelInfo, _cache_put
@@ -11,6 +12,12 @@ from backend.agent.model_fetch import ModelInfo, _cache_put
 _log = logging.getLogger(__name__)
 _CACHE_MAX = 512
 _CACHE_TTL_S = 6 * 3600.0
+_MODEL_INFO_FIELDS = {f.name for f in fields(ModelInfo)}
+
+
+def _model_info(**kw: Any) -> ModelInfo:
+    """Drop unknown fields so an older host ModelInfo does not TypeError."""
+    return ModelInfo(**{k: v for k, v in kw.items() if k in _MODEL_INFO_FIELDS})
 
 
 _OLLAMA_INFO_CACHE: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
@@ -79,7 +86,7 @@ def _fetch_ollama(base_url: str) -> list[ModelInfo]:
         # ponytail: tags has no capabilities; assume tools so Settings pickers
         # show the row. Upgrade: fill from /api/show in the background.
         models.append(
-            ModelInfo(
+            _model_info(
                 id=name,
                 display_name=name,
                 supports_tools=True,
@@ -87,6 +94,16 @@ def _fetch_ollama(base_url: str) -> list[ModelInfo]:
                 price_out=0.0,
                 is_local=True,
                 supports_thinking_effort=True,
+                thinking_menu={
+                    "lo": "Faster",
+                    "hi": "Smarter",
+                    "levels": [
+                        {"id": "off", "label": "Off", "thinking_tokens": 0, "hint": "reasoning_effort=none"},
+                        {"id": "low", "label": "Low", "thinking_tokens": None, "hint": "reasoning_effort=low, no token cap"},
+                        {"id": "medium", "label": "Med", "thinking_tokens": None, "hint": "reasoning_effort=medium, no token cap"},
+                        {"id": "high", "label": "High", "thinking_tokens": None, "hint": "reasoning_effort=high, no token cap"},
+                    ],
+                },
             )
         )
     models.sort(key=lambda m: m.id, reverse=True)
