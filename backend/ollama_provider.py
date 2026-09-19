@@ -220,19 +220,31 @@ def _estimate_prompt_tokens(
 
 
 def _pinned_num_ctx(base_url: str, model: str, model_max: int) -> int:
-    """Allocate num_ctx once from host high-water + headroom; never resize mid-chat."""
+    """Allocate num_ctx once from slider or host high-water; never resize mid-chat."""
     key = f"{(base_url or '').rstrip('/')}|{(model or '').strip()}"
     max_ctx = max(1, int(model_max))
     with _ratchet_lock:
         prev = int(_num_ctx_ratchet.get(key) or 0)
         if prev > 0:
             return min(prev, max_ctx)
+        saved = None
         try:
-            from backend.agent.context_memory import epoch_num_ctx
+            from .settings_store import clamp_num_ctx, saved_num_ctx
 
-            chosen = epoch_num_ctx(max_ctx)
+            raw = saved_num_ctx(model)
+            if raw:
+                saved = clamp_num_ctx(raw, max_ctx)
         except Exception:
-            chosen = min(max_ctx, 80_000 + _HEADROOM_TOKENS)
+            saved = None
+        if saved:
+            chosen = saved
+        else:
+            try:
+                from backend.agent.context_memory import epoch_num_ctx
+
+                chosen = epoch_num_ctx(max_ctx)
+            except Exception:
+                chosen = min(max_ctx, 80_000 + _HEADROOM_TOKENS)
         chosen = min(max(1, int(chosen)), max_ctx)
         _num_ctx_ratchet[key] = chosen
         return chosen
@@ -337,9 +349,32 @@ class OllamaProvider:
         prompt_token_est = _estimate_prompt_tokens(system, messages, tools or [])
         num_ctx = _pinned_num_ctx(self._base_url, self._model, model_max)
         options: dict[str, Any] = {"num_ctx": num_ctx}
+        keep_alive = _KEEP_ALIVE
+        opt_snap: dict[str, Any] = {}
+        try:
+            from .settings_store import saved_keep_alive, saved_options
+
+            saved_ka = saved_keep_alive(self._model)
+            if saved_ka is not None:
+                keep_alive = saved_ka
+            opt_snap = saved_options(self._model)
+            for key, val in opt_snap.items():
+                if key == "num_thread" and int(val or 0) == 0:
+                    continue
+                if key == "num_predict" and int(val or 0) < 0:
+                    continue
+                if key == "seed" and int(val or 0) < 0:
+                    continue
+                if key == "num_batch" and int(val or 0) == 0:
+                    continue
+                if key == "min_p" and float(val or 0) <= 0:
+                    continue
+                options[key] = val
+        except Exception:
+            opt_snap = {}
         extra_body: dict[str, Any] = {
             # -1 = keep loaded for the life of the Ollama server (avoid 15m idle reload).
-            "keep_alive": _KEEP_ALIVE,
+            "keep_alive": keep_alive,
             "options": options,
             **_think_extra(self._thinking_effort),
         }
@@ -407,6 +442,13 @@ class OllamaProvider:
                     last_key = key
                     event_q.put(("progress", (text, pct)))
 
+        t0 = time.time()
+        try:
+            from .stats import set_generating
+
+            set_generating(self._model)
+        except Exception:
+            pass
         reader_thread = threading.Thread(target=_reader, name="ollama-stream", daemon=True)
         reader_thread.start()
         progress_thread: threading.Thread | None = None
@@ -503,6 +545,12 @@ class OllamaProvider:
                             acc["arguments"] += tc.function.arguments
         finally:
             stop_progress.set()
+            try:
+                from .stats import set_generating
+
+                set_generating("")
+            except Exception:
+                pass
 
         if cancelled:
             return
@@ -525,6 +573,28 @@ class OllamaProvider:
             )
         if rebuilt:
             yield StreamEvent(kind=StreamEventKind.TOOL_CALLS, tool_calls=rebuilt, usage=usage)
+        elapsed = max(0.001, time.time() - t0)
+        prompt_tok = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
+        out_tok = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
+        try:
+            from .history import record_call
+
+            record_call(
+                {
+                    "model": self._model,
+                    "num_ctx": num_ctx,
+                    "keep_alive": keep_alive,
+                    "options": opt_snap,
+                    "thinking": self._thinking_effort,
+                    "prompt_tokens": prompt_tok,
+                    "completion_tokens": out_tok,
+                    "elapsed_s": round(elapsed, 3),
+                    "tokens_per_s": round(out_tok / elapsed, 2),
+                    "ok": not cancelled,
+                }
+            )
+        except Exception:
+            pass
         yield StreamEvent(
             kind=StreamEventKind.DONE,
             text=collected_text,

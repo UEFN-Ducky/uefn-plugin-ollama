@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -48,18 +49,38 @@ def test_fetch_models_uses_tags_only() -> None:
     httpx.post.side_effect = AssertionError("/api/show must not run during list")
 
     sys.modules["httpx"] = httpx
+    os.environ["DUCKY_OLLAMA_SKIP_ENRICH"] = "1"
     try:
         models = model_fetch.fetch_models("http://127.0.0.1:11434")
     finally:
+        os.environ.pop("DUCKY_OLLAMA_SKIP_ENRICH", None)
         sys.modules.pop("httpx", None)
 
     assert [m.id for m in models] == ["qwen2.5:7b", "llama3.2:latest"]
-    assert all(m.supports_tools and m.is_local for m in models)
+    assert all(m.is_local for m in models)
+    assert all(not m.thinking_menu for m in models)
     httpx.get.assert_called_once()
     assert httpx.get.call_args[0][0].endswith("/api/tags")
     httpx.post.assert_not_called()
 
 
+def test_enrich_thinking_only_when_capability() -> None:
+    model_fetch = _load_plugin_fetch()
+    thinking = model_fetch.model_from_show(
+        "qwen3.6:latest",
+        {"context_length": 262144, "capabilities": ["completion", "thinking", "tools"]},
+    )
+    assert thinking.thinking_menu and thinking.supports_thinking_effort
+    assert thinking.supports_tools and thinking.context_limit == 262144
+    plain = model_fetch.model_from_show(
+        "llama3.2:latest",
+        {"context_length": 8192, "capabilities": ["completion"]},
+    )
+    assert plain.thinking_menu is None
+    assert not plain.supports_thinking_effort
+
+
 if __name__ == "__main__":
     test_fetch_models_uses_tags_only()
+    test_enrich_thinking_only_when_capability()
     print("ok")
