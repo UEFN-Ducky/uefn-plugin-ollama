@@ -21,6 +21,7 @@ _GENERATING = ""
 _GPU_CACHE: tuple[float, dict[str, Any]] | None = None
 _GPU_MISS = False
 _GPU_TTL = 2.0
+_PS_CACHE: list[dict[str, Any]] = []
 _EMPTY_GPU = {
     "gpu_pct": None,
     "vram_used": 0,
@@ -161,13 +162,15 @@ def _cpu_windows() -> float:
     return _CPU_PCT
 
 
-def _gpu() -> dict[str, Any]:
+def _gpu(*, allow_probe: bool = True) -> dict[str, Any]:
     global _GPU_CACHE, _GPU_MISS
     if _GPU_MISS:
         return dict(_EMPTY_GPU)
     now = time.time()
-    if _GPU_CACHE and now - _GPU_CACHE[0] < _GPU_TTL:
+    if _GPU_CACHE and (not allow_probe or now - _GPU_CACHE[0] < _GPU_TTL):
         return dict(_GPU_CACHE[1])
+    if not allow_probe:
+        return dict(_GPU_CACHE[1]) if _GPU_CACHE else dict(_EMPTY_GPU)
     exe = shutil.which("nvidia-smi")
     if not exe:
         _GPU_MISS = True
@@ -258,15 +261,9 @@ def set_generating(model: str = "") -> None:
     _GENERATING = str(model or "").strip()
 
 
-def live_stats(base_url: str) -> dict[str, Any]:
-    """CPU / RAM / GPU + loaded Ollama models. Cheap enough to poll ~1s."""
-    base = normalize_ollama_base(base_url)
-    cpu = _cpu_windows() if os.name == "nt" else _cpu_linux()
-    mem = _mem()
-    gpu = _gpu()
-    disk = _disk()
+def _running_from_ps(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     running = []
-    for row in _ps(base):
+    for row in rows:
         name = str(row.get("name") or row.get("model") or "").strip()
         if not name:
             continue
@@ -281,6 +278,25 @@ def live_stats(base_url: str) -> dict[str, Any]:
                 "processor": str((row.get("details") or {}).get("family") or row.get("processor") or ""),
             }
         )
+    return running
+
+
+def live_stats(base_url: str) -> dict[str, Any]:
+    """CPU / RAM / GPU + loaded Ollama models. Cheap enough to poll ~1s."""
+    global _PS_CACHE
+    base = normalize_ollama_base(base_url)
+    cpu = _cpu_windows() if os.name == "nt" else _cpu_linux()
+    mem = _mem()
+    busy = bool(_GENERATING)
+    # Prompt-eval owns the GPU + Ollama HTTP. nvidia-smi and /api/ps hitch both.
+    gpu = _gpu(allow_probe=not busy)
+    disk = _disk()
+    if busy:
+        running = _running_from_ps(_PS_CACHE)
+    else:
+        rows = _ps(base)
+        _PS_CACHE = list(rows)
+        running = _running_from_ps(rows)
     return {
         "ok": True,
         "ts": time.time(),
