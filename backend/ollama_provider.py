@@ -54,6 +54,11 @@ _IMAGE_TOKENS_EACH = 1_600
 # Stay loaded while the Ollama server is up (15m idle used to cold-reload).
 _KEEP_ALIVE = -1
 
+try:
+    from .slim_system import slim_local_system
+except ImportError:
+    from slim_system import slim_local_system
+
 _ratchet_lock = threading.Lock()
 _num_ctx_ratchet: dict[str, int] = {}
 
@@ -314,7 +319,11 @@ class OllamaProvider:
         *,
         cache: Any | None = None,
     ) -> list[dict[str, Any]]:
-        out: list[dict[str, Any]] = list(openai_system_messages(cache, fallback_system=system))
+        slim = slim_local_system(system)
+        out: list[dict[str, Any]] = list(openai_system_messages(cache, fallback_system=slim))
+        for msg in out:
+            if msg.get("role") == "system" and isinstance(msg.get("content"), str):
+                msg["content"] = slim_local_system(msg["content"])
         for m in messages:
             if m.role == "tool":
                 out.append(
@@ -376,6 +385,7 @@ class OllamaProvider:
                 ),
             )
             return
+        system = slim_local_system(system)
         prompt_token_est = _estimate_prompt_tokens(system, messages, tools or [])
         num_ctx = _pinned_num_ctx(self._base_url, self._model, model_max)
         options: dict[str, Any] = {"num_ctx": num_ctx}
