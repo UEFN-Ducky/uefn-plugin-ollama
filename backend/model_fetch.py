@@ -196,14 +196,62 @@ def ollama_model_info(base_url: str, model: str) -> dict[str, Any]:
     return info
 
 
-def model_from_show(name: str, info: dict[str, Any]) -> ModelInfo:
+def effective_context_limit(
+    name: str,
+    api_ctx: int | None,
+    *,
+    vram_bytes: int | None = None,
+    apply_saved: bool = True,
+) -> int | None:
+    """Window Memory high-water should treat as the model max.
+
+    ``/api/show`` can claim 256k; 8GB VRAM only holds ~32k. Advertise the
+    smaller number so Settings → Memory folds old turns before Ollama fills.
+    Full chat stays saved; the model sees summary + last N (same as OpenAI).
+    """
+    if api_ctx is None:
+        return None
+    try:
+        limit = int(api_ctx)
+    except (TypeError, ValueError):
+        return None
+    if limit <= 0:
+        return None
+    try:
+        from .ollama_provider import vram_safe_ctx_cap
+
+        limit = min(limit, int(vram_safe_ctx_cap(limit, vram_bytes=vram_bytes)))
+    except Exception:
+        pass
+    if apply_saved:
+        try:
+            from .settings_store import saved_num_ctx
+
+            saved = saved_num_ctx(name)
+            if saved:
+                limit = min(limit, int(saved))
+        except Exception:
+            pass
+    return limit
+
+
+def model_from_show(
+    name: str,
+    info: dict[str, Any],
+    *,
+    vram_bytes: int | None = None,
+    apply_saved: bool = True,
+) -> ModelInfo:
     caps = [str(c).lower() for c in (info.get("capabilities") or [])]
     menu = thinking_menu_for(caps)
     ctx = info.get("context_length")
     try:
-        context_limit = int(ctx) if ctx else None
+        raw_ctx = int(ctx) if ctx else None
     except (TypeError, ValueError):
-        context_limit = None
+        raw_ctx = None
+    context_limit = effective_context_limit(
+        name, raw_ctx, vram_bytes=vram_bytes, apply_saved=apply_saved
+    )
     return _model_info(
         id=name,
         display_name=name,

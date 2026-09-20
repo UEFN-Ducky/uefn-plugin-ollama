@@ -90,22 +90,56 @@ def test_show_payload_vision_from_api_only() -> None:
 
 def test_enrich_thinking_only_when_capability() -> None:
     model_fetch = _load_plugin_fetch()
+    eight = 8 * 1024 * 1024 * 1024
     thinking = model_fetch.model_from_show(
         "qwen3.6:latest",
         {"context_length": 262144, "capabilities": ["completion", "thinking", "tools"]},
+        vram_bytes=eight,
+        apply_saved=False,
     )
     assert thinking.thinking_menu and thinking.supports_thinking_effort
-    assert thinking.supports_tools and thinking.context_limit == 262144
+    assert thinking.supports_tools and thinking.context_limit == 32768
     plain = model_fetch.model_from_show(
         "llama3.2:latest",
         {"context_length": 8192, "capabilities": ["completion"]},
+        vram_bytes=eight,
+        apply_saved=False,
     )
     assert plain.thinking_menu is None
     assert not plain.supports_thinking_effort
+    assert plain.context_limit == 8192
+
+
+def test_effective_context_limit_vram_caps_qwen() -> None:
+    model_fetch = _load_plugin_fetch()
+    eight = 8 * 1024 * 1024 * 1024
+    fat = 24 * 1024 * 1024 * 1024
+    assert (
+        model_fetch.effective_context_limit(
+            "qwen3.8:latest", 262144, vram_bytes=eight, apply_saved=False
+        )
+        == 32768
+    )
+    assert (
+        model_fetch.effective_context_limit(
+            "qwen3.8:latest", 262144, vram_bytes=fat, apply_saved=False
+        )
+        == 262144
+    )
+    assert (
+        model_fetch.effective_context_limit(
+            "llama3.2:latest", 8192, vram_bytes=eight, apply_saved=False
+        )
+        == 8192
+    )
+    assert model_fetch.effective_context_limit("q", None) is None
+    # Host Memory high-water is 65% of this advertised window (not the 80k slider).
+    assert int(32768 * 0.65) == 21299
 
 
 if __name__ == "__main__":
     test_fetch_models_uses_tags_only()
     test_show_payload_vision_from_api_only()
     test_enrich_thinking_only_when_capability()
+    test_effective_context_limit_vram_caps_qwen()
     print("ok")
