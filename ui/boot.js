@@ -1,6 +1,6 @@
 /**
- * Ollama control board — Settings teaser + popup (Yours/Library + live PC).
- * Host hook ducky:llm-slot. No DOM MutationObserver.
+ * Ollama control board — inline in Settings → LLMs → Ollama (live LEFT).
+ * Host hook ducky:llm-slot. No DOM MutationObserver. Not a modal.
  */
 (function () {
   "use strict";
@@ -9,7 +9,6 @@
   var MOUNT_ID = "ollama-library-mount";
   var STYLE_ID = "ollama-library-style";
   var MODAL_ID = "ollama-library-modal";
-  var BOARD_ID = "ollama-board-modal";
   var CAPS = [
     { id: "vision", label: "Vision", icon: "eye" },
     { id: "tools", label: "Tools", icon: "wrench" },
@@ -106,9 +105,7 @@
     var el = document.createElement("style");
     el.id = STYLE_ID;
     el.textContent = [
-      "#ollama-library-mount{margin-top:8px}",
-      ".ollama-teaser{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border:1px solid var(--border);border-radius:10px;background:color-mix(in srgb,var(--card) 70%,var(--bg))}",
-      ".ollama-teaser strong{display:block;color:var(--text)}",
+      "#ollama-library-mount{margin-top:12px;min-height:520px}",
       ".ollama-ico{flex-shrink:0}",
       ".ollama-chip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--border);background:var(--hover);color:var(--muted);border-radius:999px;padding:3px 9px;font-size:11px;line-height:1.3;cursor:pointer;font:inherit}",
       ".ollama-chip.is-on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 18%,transparent);color:var(--text)}",
@@ -122,17 +119,16 @@
       ".ollama-tr-title{display:flex;align-items:center;gap:8px;font-weight:600;color:var(--text)}",
       ".ollama-tr-meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px;color:var(--muted);font-size:12px}",
       ".ollama-tr-caps{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}",
-      "#ollama-library-modal,#ollama-board-modal{position:fixed;inset:0;z-index:100040;display:flex;align-items:center;justify-content:center;background:color-mix(in srgb,var(--bg) 55%,transparent)}",
-      "#ollama-library-modal{z-index:100050}",
+      "#ollama-library-modal{position:fixed;inset:0;z-index:100050;display:flex;align-items:center;justify-content:center;background:color-mix(in srgb,var(--bg) 55%,transparent)}",
       "#ollama-library-modal .ollama-lib-dialog{width:min(480px,calc(100vw - 32px));background:var(--card);border:1px solid var(--border);border-radius:var(--radius,12px);padding:20px;color:var(--text)}",
       ".ollama-lib-progress-track{height:6px;border-radius:999px;background:var(--hover);overflow:hidden;margin:8px 0}",
       ".ollama-lib-progress-track i{display:block;height:100%;background:var(--accent)}",
       ".ollama-lib-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}",
-      ".ollama-board{width:min(1120px,calc(100vw - 24px));height:min(740px,calc(100vh - 24px));display:grid;grid-template-columns:minmax(0,1fr) 300px;grid-template-rows:auto minmax(0,1fr);background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden;color:var(--text)}",
+      ".ollama-board{width:100%;height:min(680px,calc(100vh - 220px));display:grid;grid-template-columns:280px minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);background:color-mix(in srgb,var(--card) 70%,var(--bg));border:1px solid var(--border);border-radius:12px;overflow:hidden;color:var(--text)}",
       ".ollama-board-head{grid-column:1/-1;display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border)}",
       ".ollama-board-head h3{margin:0;flex:1;font-size:14px}",
       ".ollama-board-main,.ollama-board-live{min-height:0;overflow:auto;padding:12px}",
-      ".ollama-board-live{border-left:1px solid var(--border);background:color-mix(in srgb,var(--bg) 55%,var(--card))}",
+      ".ollama-board-live{border-right:1px solid var(--border);background:color-mix(in srgb,var(--bg) 55%,var(--card))}",
       ".ollama-faders{display:grid;grid-template-columns:repeat(auto-fill,minmax(76px,1fr));gap:8px;margin:10px 0}",
       ".ollama-fader{display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 6px 8px;border:1px solid var(--border);border-radius:10px;background:color-mix(in srgb,var(--card) 80%,var(--bg))}",
       ".ollama-fader-label{font-size:10px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);text-align:center}",
@@ -176,8 +172,6 @@
   function inOllamaUi(el) {
     var settings = document.getElementById(MOUNT_ID);
     if (settings && settings.contains(el)) return true;
-    var board = document.getElementById(BOARD_ID);
-    if (board && board.contains(el)) return true;
     return !!(pickerMount && pickerMount.contains(el));
   }
 
@@ -328,7 +322,7 @@
 
   function tuneBoard(st) {
     if (!state.selected || !st || !st.ok) {
-      return '<p class="general-tab-section-desc">Select a model on the left to open the mixer.</p>';
+      return '<p class="general-tab-section-desc">Select a model on the right to open the mixer.</p>';
     }
     return (
       '<div class="ollama-faders">' +
@@ -570,44 +564,19 @@
       '" data-act="tab" data-name="yours">Yours</button>' +
       '<button type="button" class="settings-btn' +
       (state.tab === "library" ? " is-on" : "") +
-      '" data-act="tab" data-name="library">Library</button>' +
-      '<button type="button" class="settings-btn" data-act="board-close">Close</button></div>' +
-      '<div class="ollama-board-main">' +
-      (state.tab === "library" ? libraryPane() : yoursPane()) +
-      '</div><aside class="ollama-board-live">' +
+      '" data-act="tab" data-name="library">Library</button></div>' +
+      '<aside class="ollama-board-live">' +
       livePane() +
-      "</aside></div>"
+      '</aside><div class="ollama-board-main">' +
+      (state.tab === "library" ? libraryPane() : yoursPane()) +
+      "</div></div>"
     );
   }
 
   function renderMount() {
     var mount = document.getElementById(MOUNT_ID);
     if (!mount) return;
-    var local = state.local || {};
-    mount.innerHTML =
-      '<div class="ollama-teaser" data-no-translate><div><strong>Ollama board</strong>' +
-      '<span class="general-tab-section-desc">' +
-      esc(local.storage_label || "0 B") +
-      " · " +
-      (local.count || 0) +
-      " models" +
-      (local.loaded_count ? " · " + local.loaded_count + " loaded" : "") +
-      "</span></div>" +
-      '<button type="button" class="settings-btn" data-act="board">' +
-      icon("board") +
-      " Open board</button></div>";
-  }
-
-  function renderBoard() {
-    var old = document.getElementById(BOARD_ID);
-    if (!state.boardOpen) {
-      if (old) old.remove();
-      return;
-    }
-    var box = old || document.createElement("div");
-    box.id = BOARD_ID;
-    box.innerHTML = boardHtml();
-    if (!old) document.body.appendChild(box);
+    mount.innerHTML = boardHtml();
     startLivePoll();
   }
 
@@ -662,10 +631,7 @@
     var st = state.settings;
     var name = state.selected || "";
     if (!name) {
-      pickerMount.innerHTML =
-        '<div class="ollama-picker"><button type="button" class="settings-btn" data-act="board">' +
-        icon("board") +
-        " Open board</button></div>";
+      pickerMount.innerHTML = "";
       return;
     }
     if (!st || !st.ok) {
@@ -675,9 +641,7 @@
     pickerMount.innerHTML =
       '<div class="ollama-picker" data-no-translate><div class="ollama-search"><span data-no-translate>' +
       esc(name) +
-      '</span><button type="button" class="settings-btn" data-act="board">' +
-      icon("board") +
-      " Board</button></div><div class=\"ollama-faders\">" +
+      '</span></div><div class="ollama-faders">' +
       ctxFaders(st) +
       optFaders(st, 3) +
       "</div></div>";
@@ -738,7 +702,6 @@
       el.removeAttribute("id");
     }
     state.boardOpen = false;
-    renderBoard();
     if (liveTimer) {
       clearInterval(liveTimer);
       liveTimer = 0;
@@ -767,7 +730,6 @@
   function render() {
     renderMount();
     renderPicker();
-    renderBoard();
     renderModal();
   }
 
@@ -860,20 +822,6 @@
     if (!t || !inOllamaUi(t)) return;
     var act = t.getAttribute("data-act");
     var name = t.getAttribute("data-name") || "";
-    if (act === "board") {
-      state.boardOpen = true;
-      render();
-      refreshLive();
-      refreshHistory();
-      if (state.tab === "library" && !state.catalog.length) refreshLibrary();
-      return;
-    }
-    if (act === "board-close") {
-      state.boardOpen = false;
-      render();
-      startLivePoll();
-      return;
-    }
     if (act === "tab") {
       state.tab = name;
       render();
@@ -1066,10 +1014,17 @@
       ev.preventDefault();
       refreshLibrary();
     }
-    if (ev.key === "Escape" && state.boardOpen && !state.pull && !state.deleteName) {
-      state.boardOpen = false;
+    if (ev.key === "Escape" && (state.pull || state.deleteName)) {
+      if (state.pull && state.pull.job_id && !state.pull.done) {
+        call("pull.cancel", { job_id: state.pull.job_id });
+      }
+      state.pull = null;
+      state.deleteName = "";
+      if (pullTimer) {
+        clearInterval(pullTimer);
+        pullTimer = 0;
+      }
       render();
-      startLivePoll();
     }
   });
 
@@ -1090,8 +1045,6 @@
     document.removeEventListener("input", onMountInput);
     var modal = document.getElementById(MODAL_ID);
     if (modal) modal.remove();
-    var board = document.getElementById(BOARD_ID);
-    if (board) board.remove();
     var style = document.getElementById(STYLE_ID);
     if (style) style.remove();
   };

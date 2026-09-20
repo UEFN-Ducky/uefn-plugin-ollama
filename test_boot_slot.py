@@ -12,6 +12,10 @@ def test_boot_uses_llm_slot_hook() -> None:
     assert "ollama-board" in src
     assert "ollama-fader" in src
     assert "attachPicker" in src
+    assert "ollama-board-modal" not in src
+    assert "Open board" not in src
+    assert "grid-template-columns:280px minmax(0,1fr)" in src
+    assert src.index('aside class="ollama-board-live"') < src.index('div class="ollama-board-main"')
 
 
 if __name__ == "__main__":
