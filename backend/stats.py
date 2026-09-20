@@ -21,7 +21,18 @@ _GENERATING = ""
 _GPU_CACHE: tuple[float, dict[str, Any]] | None = None
 _GPU_MISS = False
 _GPU_TTL = 2.0
-_EMPTY_GPU = {"gpu_pct": None, "vram_used": 0, "vram_total": 0, "vram_label": ""}
+_EMPTY_GPU = {
+    "gpu_pct": None,
+    "vram_used": 0,
+    "vram_total": 0,
+    "vram_label": "",
+    "gpu_temp": None,
+    "gpu_power": None,
+    "gpu_power_limit": None,
+    "gpu_fan": None,
+    "gpu_name": "",
+    "gpu_clock": None,
+}
 
 
 def _hidden_popen_kwargs() -> dict[str, Any]:
@@ -165,7 +176,7 @@ def _gpu() -> dict[str, Any]:
         out = subprocess.check_output(
             [
                 exe,
-                "--query-gpu=utilization.gpu,memory.used,memory.total",
+                "--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw,power.limit,fan.speed,name,clocks.current.graphics",
                 "--format=csv,noheader,nounits",
             ],
             timeout=2.0,
@@ -178,6 +189,17 @@ def _gpu() -> dict[str, Any]:
         return dict(_EMPTY_GPU)
     line = (out or "").splitlines()[0] if out else ""
     parts = [p.strip() for p in line.split(",")]
+    def _num(idx: int) -> float | None:
+        if idx >= len(parts):
+            return None
+        raw = parts[idx].strip().replace("[N/A]", "").replace("N/A", "")
+        if not raw:
+            return None
+        try:
+            return float(raw)
+        except ValueError:
+            return None
+
     try:
         pct = float(parts[0])
         used = int(float(parts[1]) * 1024 * 1024)
@@ -185,14 +207,50 @@ def _gpu() -> dict[str, Any]:
     except (IndexError, ValueError):
         _GPU_MISS = True
         return dict(_EMPTY_GPU)
+    temp = _num(3)
+    power = _num(4)
+    power_lim = _num(5)
+    fan = _num(6)
+    name = parts[7].strip() if len(parts) > 7 else ""
+    clock = _num(8)
     row = {
         "gpu_pct": pct,
         "vram_used": used,
         "vram_total": total,
         "vram_label": f"{format_bytes(used)} / {format_bytes(total)}",
+        "gpu_temp": temp,
+        "gpu_power": power,
+        "gpu_power_limit": power_lim,
+        "gpu_fan": fan,
+        "gpu_name": name,
+        "gpu_clock": clock,
     }
     _GPU_CACHE = (now, row)
     return dict(row)
+
+
+def _disk() -> dict[str, Any]:
+    root = (
+        os.environ.get("OLLAMA_MODELS")
+        or os.environ.get("OLLAMA_HOME")
+        or ("C:\\" if os.name == "nt" else "/")
+    )
+    try:
+        usage = shutil.disk_usage(root)
+    except OSError:
+        try:
+            usage = shutil.disk_usage("C:\\" if os.name == "nt" else "/")
+        except OSError:
+            return {"disk_total": 0, "disk_used": 0, "disk_pct": 0.0, "disk_label": "n/a"}
+    total = int(usage.total)
+    used = int(usage.used)
+    pct = (100.0 * used / total) if total else 0.0
+    return {
+        "disk_total": total,
+        "disk_used": used,
+        "disk_pct": round(pct, 1),
+        "disk_label": f"{format_bytes(used)} / {format_bytes(total)}",
+    }
 
 
 def set_generating(model: str = "") -> None:
@@ -206,6 +264,7 @@ def live_stats(base_url: str) -> dict[str, Any]:
     cpu = _cpu_windows() if os.name == "nt" else _cpu_linux()
     mem = _mem()
     gpu = _gpu()
+    disk = _disk()
     running = []
     for row in _ps(base):
         name = str(row.get("name") or row.get("model") or "").strip()
@@ -229,7 +288,9 @@ def live_stats(base_url: str) -> dict[str, Any]:
         "thinking": bool(_GENERATING),
         "generating_model": _GENERATING,
         "cpu_pct": round(cpu, 1),
+        "cpu_count": os.cpu_count() or 0,
         **mem,
         **gpu,
+        **disk,
         "models": running,
     }

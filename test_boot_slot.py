@@ -8,7 +8,9 @@ BOOT = Path(__file__).resolve().parent / "ui" / "boot.js"
 def test_boot_uses_llm_slot_hook() -> None:
     src = BOOT.read_text(encoding="utf-8")
     assert "ducky:llm-slot" in src
-    assert "MutationObserver" not in src
+    assert "new MutationObserver" not in src
+    assert "ollama-board" in src
+    assert "ollama-fader" in src
     assert "attachPicker" in src
 
 

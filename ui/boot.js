@@ -1,6 +1,6 @@
 /**
- * Inject the Ollama library/Yours manager into Settings → LLMs → Ollama.
- * Main-window boot so we use host CSS variables. No EXE changes.
+ * Ollama control board — Settings teaser + popup (Yours/Library + live PC).
+ * Host hook ducky:llm-slot. No DOM MutationObserver.
  */
 (function () {
   "use strict";
@@ -9,7 +9,14 @@
   var MOUNT_ID = "ollama-library-mount";
   var STYLE_ID = "ollama-library-style";
   var MODAL_ID = "ollama-library-modal";
-  var CAPS = ["vision", "tools", "thinking", "embedding", "cloud"];
+  var BOARD_ID = "ollama-board-modal";
+  var CAPS = [
+    { id: "vision", label: "Vision", icon: "eye" },
+    { id: "tools", label: "Tools", icon: "wrench" },
+    { id: "thinking", label: "Think", icon: "brain" },
+    { id: "embedding", label: "Embed", icon: "layers" },
+    { id: "cloud", label: "Cloud", icon: "cloud" },
+  ];
   var state = {
     tab: "yours",
     local: null,
@@ -27,6 +34,7 @@
     samples: [],
     history: [],
     histIndex: 4,
+    boardOpen: false,
   };
   var pullTimer = 0;
   var liveTimer = 0;
@@ -56,47 +64,91 @@
       .replace(/"/g, "&quot;");
   }
 
+  function icon(name) {
+    var p =
+      name === "eye"
+        ? '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"/><circle cx="12" cy="12" r="3"/>'
+        : name === "wrench"
+          ? '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4L15 7z"/>'
+          : name === "brain"
+            ? '<path d="M9.5 2a3.5 3.5 0 0 0-3.3 4.6A3.5 3.5 0 0 0 4 9.5V14a3 3 0 0 0 3 3h1v3h4v-4h1a3 3 0 0 0 3-3V9.5a3.5 3.5 0 0 0-2.2-3A3.5 3.5 0 0 0 14.5 2 3.5 3.5 0 0 0 12 3.4 3.5 3.5 0 0 0 9.5 2z"/>'
+            : name === "layers"
+              ? '<path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>'
+              : name === "cloud"
+                ? '<path d="M18 10h-1.3A5 5 0 0 0 7 9a4 4 0 0 0 0 8h11a3 3 0 0 0 0-6z"/>'
+                : name === "search"
+                  ? '<circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/>'
+                  : name === "board"
+                    ? '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>'
+                    : '<circle cx="12" cy="12" r="4"/>';
+    return (
+      '<svg class="ollama-ico" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+      p +
+      "</svg>"
+    );
+  }
+
+  function heatColor(t) {
+    var n = Math.max(0, Math.min(1, t));
+    if (n <= 0.5) return "color-mix(in srgb, var(--amber) " + Math.round(n * 200) + "%, var(--green))";
+    return "color-mix(in srgb, var(--red) " + Math.round((n - 0.5) * 200) + "%, var(--amber))";
+  }
+
+  function heatOf(val, lo, hi) {
+    var a = Number(lo);
+    var b = Number(hi);
+    if (b === a) return 0;
+    return Math.max(0, Math.min(1, (Number(val) - a) / (b - a)));
+  }
+
   function ensureStyle() {
     if (document.getElementById(STYLE_ID)) return;
     var el = document.createElement("style");
     el.id = STYLE_ID;
     el.textContent = [
       "#ollama-library-mount{margin-top:8px}",
-      ".ollama-lib-tabs{display:flex;gap:8px;margin:0 0 12px}",
-      ".ollama-lib-tabs .settings-btn.is-on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 18%,transparent)}",
-      ".ollama-lib-card{display:flex;flex-direction:column;gap:10px}",
-      ".ollama-lib-storage{display:flex;align-items:baseline;gap:10px;color:var(--text)}",
-      ".ollama-lib-muted{color:var(--muted);font-size:12px}",
-      ".ollama-lib-search,.ollama-lib-filters,.ollama-lib-keep,.ollama-lib-row{display:flex;align-items:center;gap:8px}",
-      ".ollama-lib-search .settings-input{flex:1}",
-      ".ollama-lib-filters{flex-wrap:wrap}",
-      ".ollama-lib-row{align-items:flex-start;padding:8px 0;border-top:1px solid var(--border)}",
-      ".ollama-lib-row.is-selected{background:color-mix(in srgb,var(--accent) 10%,transparent);margin:0 -10px;padding:8px 10px;border-radius:8px}",
-      ".ollama-lib-row-main{flex:1;min-width:0;text-align:left;background:none;border:0;padding:0;color:inherit;cursor:pointer}",
-      ".ollama-lib-row-title{display:flex;align-items:center;gap:8px;font-weight:600;color:var(--text)}",
-      ".ollama-lib-meta,.ollama-lib-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}",
-      ".ollama-lib-meta{color:var(--muted);font-size:12px}",
-      ".ollama-lib-chip,.ollama-lib-chip-btn{border:1px solid var(--border);background:var(--hover);color:var(--muted);border-radius:999px;padding:2px 8px;font-size:11px;line-height:1.4}",
-      ".ollama-lib-chip-btn{cursor:pointer;font:inherit}",
-      ".ollama-lib-chip.is-on,.ollama-lib-chip-btn.is-on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 18%,transparent);color:var(--text)}",
-      ".ollama-lib-tune{border-top:1px solid var(--border);padding-top:12px}",
-      ".ollama-lib-tune-head{display:flex;justify-content:space-between;gap:8px;margin-bottom:8px}",
-      ".ollama-lib-slider{width:100%;accent-color:var(--accent)}",
-      ".ollama-lib-ticks{display:flex;justify-content:space-between;color:var(--muted);font-size:11px;margin:4px 0 12px}",
-      "#ollama-library-modal{position:fixed;inset:0;z-index:100040;display:flex;align-items:center;justify-content:center;background:color-mix(in srgb,var(--bg) 55%,transparent)}",
+      ".ollama-teaser{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border:1px solid var(--border);border-radius:10px;background:color-mix(in srgb,var(--card) 70%,var(--bg))}",
+      ".ollama-teaser strong{display:block;color:var(--text)}",
+      ".ollama-ico{flex-shrink:0}",
+      ".ollama-chip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--border);background:var(--hover);color:var(--muted);border-radius:999px;padding:3px 9px;font-size:11px;line-height:1.3;cursor:pointer;font:inherit}",
+      ".ollama-chip.is-on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 18%,transparent);color:var(--text)}",
+      ".ollama-filters{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}",
+      ".ollama-search{display:flex;align-items:center;gap:8px}",
+      ".ollama-search .settings-input{flex:1}",
+      ".ollama-table{display:flex;flex-direction:column}",
+      ".ollama-tr{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:10px 2px;border-top:1px solid var(--border)}",
+      ".ollama-tr.is-selected{background:color-mix(in srgb,var(--accent) 10%,transparent);margin:0 -8px;padding:10px 8px;border-radius:8px}",
+      ".ollama-tr-main{min-width:0;text-align:left;background:none;border:0;padding:0;color:inherit;cursor:pointer;font:inherit}",
+      ".ollama-tr-title{display:flex;align-items:center;gap:8px;font-weight:600;color:var(--text)}",
+      ".ollama-tr-meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px;color:var(--muted);font-size:12px}",
+      ".ollama-tr-caps{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}",
+      "#ollama-library-modal,#ollama-board-modal{position:fixed;inset:0;z-index:100040;display:flex;align-items:center;justify-content:center;background:color-mix(in srgb,var(--bg) 55%,transparent)}",
+      "#ollama-library-modal{z-index:100050}",
       "#ollama-library-modal .ollama-lib-dialog{width:min(480px,calc(100vw - 32px));background:var(--card);border:1px solid var(--border);border-radius:var(--radius,12px);padding:20px;color:var(--text)}",
       ".ollama-lib-progress-track{height:6px;border-radius:999px;background:var(--hover);overflow:hidden;margin:8px 0}",
       ".ollama-lib-progress-track i{display:block;height:100%;background:var(--accent)}",
       ".ollama-lib-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}",
-      ".ollama-lib-bar{height:8px;border-radius:999px;background:var(--hover);overflow:hidden;margin:4px 0 10px}",
-      ".ollama-lib-bar i{display:block;height:100%;background:var(--accent)}",
-      ".ollama-lib-bar.is-hot i{background:var(--amber)}",
-      ".ollama-lib-bar.is-max i{background:var(--red)}",
-      ".ollama-lib-opt{margin:8px 0}",
-      ".ollama-lib-svg{width:100%;height:56px;display:block}",
+      ".ollama-board{width:min(1120px,calc(100vw - 24px));height:min(740px,calc(100vh - 24px));display:grid;grid-template-columns:minmax(0,1fr) 300px;grid-template-rows:auto minmax(0,1fr);background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden;color:var(--text)}",
+      ".ollama-board-head{grid-column:1/-1;display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border)}",
+      ".ollama-board-head h3{margin:0;flex:1;font-size:14px}",
+      ".ollama-board-main,.ollama-board-live{min-height:0;overflow:auto;padding:12px}",
+      ".ollama-board-live{border-left:1px solid var(--border);background:color-mix(in srgb,var(--bg) 55%,var(--card))}",
+      ".ollama-faders{display:grid;grid-template-columns:repeat(auto-fill,minmax(76px,1fr));gap:8px;margin:10px 0}",
+      ".ollama-fader{display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 6px 8px;border:1px solid var(--border);border-radius:10px;background:color-mix(in srgb,var(--card) 80%,var(--bg))}",
+      ".ollama-fader-label{font-size:10px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);text-align:center}",
+      ".ollama-fader-val{font-size:12px;font-variant-numeric:tabular-nums;color:var(--text)}",
+      ".ollama-fader-track{position:relative;width:28px;height:96px;border-radius:8px;background:var(--bg-elevated,var(--card));box-shadow:inset 0 2px 6px color-mix(in srgb,var(--bg) 80%,transparent);overflow:hidden}",
+      ".ollama-fader-dots{position:absolute;inset:0;background-image:radial-gradient(circle,var(--muted) 1.2px,transparent 1.2px);background-size:8px 8px}",
+      ".ollama-fader-fill{position:absolute;left:0;right:0;bottom:0;height:calc(100% * var(--effort-heat,0));background-image:radial-gradient(circle,var(--slider-color,var(--green)) 2px,transparent 2px);background-size:8px 8px}",
+      ".ollama-fader-track input{position:absolute;inset:0;opacity:0.02;width:100%;height:100%;margin:0;cursor:pointer;writing-mode:vertical-lr;direction:rtl}",
+      ".ollama-keep{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 12px}",
+      ".ollama-live-status{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:10px}",
+      ".ollama-graph{margin:0 0 12px}",
+      ".ollama-graph-head{display:flex;justify-content:space-between;gap:8px;font-size:11px;margin-bottom:4px}",
+      ".ollama-graph-head span:last-child{color:var(--muted);font-variant-numeric:tabular-nums}",
+      ".ollama-svg{width:100%;height:48px;display:block}",
       ".ollama-picker{padding:8px 10px 4px}",
-      ".ollama-picker .ollama-lib-opt{margin:6px 0}",
-      ".ollama-picker .ollama-lib-tune{margin:0}",
+      ".ollama-picker .ollama-faders{grid-template-columns:repeat(4,minmax(0,1fr))}",
     ].join("");
     document.head.appendChild(el);
   }
@@ -124,32 +176,128 @@
   function inOllamaUi(el) {
     var settings = document.getElementById(MOUNT_ID);
     if (settings && settings.contains(el)) return true;
+    var board = document.getElementById(BOARD_ID);
+    if (board && board.contains(el)) return true;
     return !!(pickerMount && pickerMount.contains(el));
   }
 
-  function ctxHtml(st) {
+  function faderHtml(opts) {
+    var heat = heatOf(opts.value, opts.lo, opts.hi);
+    return (
+      '<div class="ollama-fader" style="--effort-heat:' +
+      heat +
+      ";--slider-color:" +
+      heatColor(heat) +
+      '"><span class="ollama-fader-label" data-no-translate>' +
+      esc(opts.label) +
+      '</span><div class="ollama-fader-track"><span class="ollama-fader-dots"></span><span class="ollama-fader-fill"></span>' +
+      '<input type="range" data-act="' +
+      esc(opts.act) +
+      '"' +
+      (opts.opt ? ' data-opt="' + esc(opts.opt) + '"' : "") +
+      ' min="' +
+      opts.lo +
+      '" max="' +
+      opts.hi +
+      '" step="' +
+      (opts.step == null ? 1 : opts.step) +
+      '" value="' +
+      opts.value +
+      '" /></div><span class="ollama-fader-val">' +
+      esc(opts.readout) +
+      "</span></div>"
+    );
+  }
+
+  function areaChart(values, colorVar, ceiling) {
+    var pts = values || [];
+    if (!pts.length) return '<svg class="ollama-svg" viewBox="0 0 100 40"></svg>';
+    var max = ceiling || Math.max.apply(null, pts.concat([1]));
+    var w = 100;
+    var step = pts.length > 1 ? w / (pts.length - 1) : w;
+    var line = pts
+      .map(function (v, i) {
+        return (i * step).toFixed(1) + "," + (38 - (Number(v) / max) * 34).toFixed(1);
+      })
+      .join(" ");
+    var fill =
+      "0,40 " +
+      pts
+        .map(function (v, i) {
+          return (i * step).toFixed(1) + "," + (38 - (Number(v) / max) * 34).toFixed(1);
+        })
+        .join(" ") +
+      " 100,40";
+    var c = colorVar || "--accent";
+    return (
+      '<svg class="ollama-svg" viewBox="0 0 100 40" preserveAspectRatio="none">' +
+      '<polygon fill="color-mix(in srgb, var(' +
+      c +
+      ') 28%, transparent)" points="' +
+      fill +
+      '" />' +
+      '<polyline fill="none" stroke="var(' +
+      c +
+      ')" stroke-width="1.6" stroke-linejoin="round" points="' +
+      line +
+      '" /></svg>'
+    );
+  }
+
+  function graphCard(label, readout, pts, colorVar, ceiling) {
+    return (
+      '<div class="ollama-graph"><div class="ollama-graph-head"><span data-no-translate>' +
+      esc(label) +
+      "</span><span>" +
+      esc(readout) +
+      "</span></div>" +
+      areaChart(pts, colorVar, ceiling) +
+      "</div>"
+    );
+  }
+
+  function ctxFaders(st) {
     var ticks = (st && st.ticks) || [];
     var labels = (st && st.tick_labels) || [];
     var idx = Math.max(0, ticks.indexOf(st.num_ctx));
     if (ticks.indexOf(st.num_ctx) < 0) idx = Math.max(0, ticks.length - 1);
+    return faderHtml({
+      label: "Context",
+      act: "ctx",
+      lo: 0,
+      hi: Math.max(0, ticks.length - 1),
+      step: 1,
+      value: idx,
+      readout: labels[idx] || st.num_ctx || "",
+    });
+  }
+
+  function optFaders(st, limit) {
+    var opts = (st && st.options) || {};
+    var sliders = (st && st.sliders) || [];
+    if (limit) sliders = sliders.slice(0, limit);
+    return sliders
+      .map(function (s) {
+        var val = opts[s.id] != null ? opts[s.id] : s.default;
+        return faderHtml({
+          label: s.label,
+          act: "opt",
+          opt: s.id,
+          lo: s.lo,
+          hi: s.hi,
+          step: s.step,
+          value: val,
+          readout: String(val),
+        });
+      })
+      .join("");
+  }
+
+  function switchRow(st) {
+    var opts = (st && st.options) || {};
+    var switches = (st && st.switches) || [];
     return (
-      '<div class="ollama-lib-tune"><div class="ollama-lib-tune-head"><span>Context length</span>' +
-      '<span class="ollama-lib-muted">' +
-      esc(labels[idx] || st.num_ctx || "") +
-      "</span></div>" +
-      '<input type="range" class="ollama-lib-slider" data-act="ctx" min="0" max="' +
-      Math.max(0, ticks.length - 1) +
-      '" value="' +
-      idx +
-      '" />' +
-      '<div class="ollama-lib-ticks">' +
-      labels
-        .map(function (l) {
-          return "<span>" + esc(l) + "</span>";
-        })
-        .join("") +
-      "</div>" +
-      '<div class="ollama-lib-keep">' +
+      '<div class="ollama-keep">' +
       '<button type="button" class="settings-btn' +
       (st.keep_alive === -1 ? " is-on" : "") +
       '" data-act="alive" data-value="-1">Stay loaded</button>' +
@@ -159,158 +307,60 @@
       '<button type="button" class="settings-btn' +
       (st.keep_alive === 0 ? " is-on" : "") +
       '" data-act="alive" data-value="0">Unload idle</button>' +
-      '<button type="button" class="settings-btn" data-act="reset">Reset to defaults</button></div></div>'
+      '<button type="button" class="settings-btn" data-act="reset">Reset</button>' +
+      switches
+        .map(function (s) {
+          var on = !!(opts[s.id] != null ? opts[s.id] : s.default);
+          return (
+            '<button type="button" class="settings-btn' +
+            (on ? " is-on" : "") +
+            '" data-act="switch" data-opt="' +
+            esc(s.id) +
+            '">' +
+            esc(s.label) +
+            "</button>"
+          );
+        })
+        .join("") +
+      "</div>"
     );
   }
 
-  function chip(label, on) {
-    return '<span class="ollama-lib-chip' + (on ? " is-on" : "") + '">' + esc(label) + "</span>";
-  }
-
-  function barHtml(pct, extra) {
-    var n = Math.max(0, Math.min(100, Number(pct) || 0));
-    var cls = n >= 90 ? " is-max" : n >= 70 ? " is-hot" : "";
+  function tuneBoard(st) {
+    if (!state.selected || !st || !st.ok) {
+      return '<p class="general-tab-section-desc">Select a model on the left to open the mixer.</p>';
+    }
     return (
-      '<div class="ollama-lib-bar' +
-      cls +
-      (extra ? " " + extra : "") +
-      '"><i style="width:' +
-      n +
-      '%"></i></div>'
+      '<div class="ollama-faders">' +
+      ctxFaders(st) +
+      optFaders(st) +
+      "</div>" +
+      switchRow(st)
     );
   }
 
-  function sparkline(values, colorVar) {
-    var pts = values || [];
-    if (!pts.length) return '<svg class="ollama-lib-svg" viewBox="0 0 100 40"></svg>';
-    var max = Math.max.apply(null, pts.concat([1]));
-    var w = 100;
-    var step = pts.length > 1 ? w / (pts.length - 1) : w;
-    var d = pts
-      .map(function (v, i) {
-        var x = (i * step).toFixed(1);
-        var y = (40 - (Number(v) / max) * 36 - 2).toFixed(1);
-        return x + "," + y;
-      })
-      .join(" ");
-    return (
-      '<svg class="ollama-lib-svg" viewBox="0 0 100 40" preserveAspectRatio="none">' +
-      '<polyline fill="none" stroke="var(' +
-      (colorVar || "--accent") +
-      ')" stroke-width="1.6" points="' +
-      d +
-      '" /></svg>'
-    );
-  }
-
-  function optSlidersHtml(st) {
-    var opts = (st && st.options) || {};
-    var sliders = (st && st.sliders) || [];
-    var switches = (st && st.switches) || [];
-    var html = sliders
-      .map(function (s) {
-        var val = opts[s.id] != null ? opts[s.id] : s.default;
-        var lo = s.lo;
-        var hi = s.hi;
-        var step = s.step;
-        return (
-          '<div class="ollama-lib-opt"><div class="ollama-lib-tune-head"><span>' +
-          esc(s.label) +
-          '</span><span class="ollama-lib-muted">' +
-          val +
-          "</span></div>" +
-          '<input type="range" class="ollama-lib-slider" data-act="opt" data-opt="' +
-          esc(s.id) +
-          '" min="' +
-          lo +
-          '" max="' +
-          hi +
-          '" step="' +
-          step +
-          '" value="' +
-          val +
-          '" /></div>'
-        );
-      })
-      .join("");
-    var sw = switches
-      .map(function (s) {
-        var on = !!(opts[s.id] != null ? opts[s.id] : s.default);
-        return (
-          '<button type="button" class="settings-btn' +
-          (on ? " is-on" : "") +
-          '" data-act="switch" data-opt="' +
-          esc(s.id) +
-          '">' +
-          esc(s.label) +
-          "</button>"
-        );
-      })
-      .join("");
-    return html + (sw ? '<div class="ollama-lib-keep">' + sw + "</div>" : "");
-  }
-
-  function liveHtml() {
+  function livePane() {
     var live = state.live || {};
     var samples = state.samples || [];
-    var cpuPts = samples.map(function (s) {
-      return s.cpu_pct || 0;
-    });
-    var ramPts = samples.map(function (s) {
-      return s.ram_pct || 0;
-    });
-    var gpuPts = samples.map(function (s) {
-      return s.gpu_pct || 0;
-    });
-    var calls = state.history || [];
-    var idx = Math.max(0, Math.min(calls.length - 1, state.histIndex));
-    var call = calls[idx];
+    var series = function (key) {
+      return samples.map(function (s) {
+        return s[key] == null ? 0 : s[key];
+      });
+    };
     var runNote = live.thinking
       ? "Thinking · " + (live.generating_model || "")
       : live.running
-        ? "Loaded"
+        ? "Warm"
         : "Idle";
-    var hist = "";
-    if (calls.length) {
-      hist =
-        '<div class="ollama-lib-tune"><div class="ollama-lib-tune-head"><span>Call history</span>' +
-        '<span class="ollama-lib-muted">' +
-        (idx + 1) +
-        " / " +
-        calls.length +
-        "</span></div>" +
-        '<input type="range" class="ollama-lib-slider" data-act="hist" min="0" max="' +
-        (calls.length - 1) +
-        '" value="' +
-        idx +
-        '" />' +
-        '<p class="general-tab-section-desc">' +
-        esc(call.model || "") +
-        " · " +
-        (call.tokens_per_s || 0) +
-        " tok/s · " +
-        (call.elapsed_s || 0) +
-        "s · ctx " +
-        (call.num_ctx || "?") +
-        " · " +
-        (call.completion_tokens || 0) +
-        " out</p>" +
-        sparkline(
-          calls.map(function (c) {
-            return c.tokens_per_s || 0;
-          }),
-          "--green"
-        ) +
-        '<button type="button" class="settings-btn" data-act="apply-hist" data-index="' +
-        idx +
-        '">Apply these sliders</button></div>';
-    } else {
-      hist = '<p class="general-tab-section-desc">No calls logged yet. Chat once and the last 5 runs show up here.</p>';
-    }
-    var models = (live.models || [])
+    var vramPct =
+      live.vram_total ? (100 * (live.vram_used || 0)) / live.vram_total : live.gpu_pct || 0;
+    var calls = state.history || [];
+    var idx = Math.max(0, Math.min(calls.length - 1, state.histIndex));
+    var call = calls[idx];
+    var loaded = (live.models || [])
       .map(function (m) {
         return (
-          '<div class="ollama-lib-meta"><span>' +
+          '<div class="ollama-tr-meta"><span data-no-translate>' +
           esc(m.name) +
           "</span><span>" +
           esc(m.size_vram_label || "") +
@@ -318,38 +368,70 @@
         );
       })
       .join("");
+    var hist = "";
+    if (calls.length) {
+      hist =
+        '<div class="ollama-graph-head"><span>History</span><span>' +
+        (idx + 1) +
+        " / " +
+        calls.length +
+        "</span></div>" +
+        faderHtml({
+          label: "Call",
+          act: "hist",
+          lo: 0,
+          hi: calls.length - 1,
+          step: 1,
+          value: idx,
+          readout: String((call && call.tokens_per_s) || 0) + " tok/s",
+        }) +
+        '<p class="general-tab-section-desc" data-no-translate>' +
+        esc((call && call.model) || "") +
+        " · " +
+        ((call && call.tokens_per_s) || 0) +
+        " tok/s · " +
+        ((call && call.elapsed_s) || 0) +
+        "s · ctx " +
+        ((call && call.num_ctx) || "?") +
+        "</p>" +
+        areaChart(
+          calls.map(function (c) {
+            return c.tokens_per_s || 0;
+          }),
+          "--green"
+        ) +
+        '<button type="button" class="settings-btn" data-act="apply-hist" data-index="' +
+        idx +
+        '">Apply sliders</button>';
+    }
     return (
-      '<div class="llms-provider-card ollama-lib-card">' +
-      '<div class="ollama-lib-storage"><span>' +
-      runNote +
+      '<div class="ollama-live-status"><span>' +
+      esc(runNote) +
       "</span><strong>" +
-      (live.thinking ? "live" : live.running ? "warm" : "idle") +
+      (live.gpu_name ? esc(live.gpu_name) : "PC") +
       "</strong></div>" +
-      '<div class="ollama-lib-tune-head"><span>CPU</span><span class="ollama-lib-muted">' +
-      (live.cpu_pct != null ? live.cpu_pct + "%" : "n/a") +
-      "</span></div>" +
-      barHtml(live.cpu_pct) +
-      sparkline(cpuPts, "--accent") +
-      '<div class="ollama-lib-tune-head"><span>RAM</span><span class="ollama-lib-muted">' +
-      esc(live.ram_label || "") +
-      "</span></div>" +
-      barHtml(live.ram_pct) +
-      sparkline(ramPts, "--amber") +
-      (live.vram_label
-        ? '<div class="ollama-lib-tune-head"><span>GPU VRAM</span><span class="ollama-lib-muted">' +
-          esc(live.vram_label) +
-          (live.gpu_pct != null ? " · " + live.gpu_pct + "%" : "") +
-          "</span></div>" +
-          barHtml(live.gpu_pct != null ? live.gpu_pct : live.vram_total ? (100 * live.vram_used) / live.vram_total : 0) +
-          sparkline(gpuPts, "--green")
+      graphCard("CPU" + (live.cpu_count ? " · " + live.cpu_count + "c" : ""), (live.cpu_pct != null ? live.cpu_pct + "%" : "n/a"), series("cpu_pct"), "--accent", 100) +
+      graphCard("RAM", live.ram_label || "n/a", series("ram_pct"), "--amber", 100) +
+      graphCard("GPU", live.gpu_pct != null ? live.gpu_pct + "%" : "n/a", series("gpu_pct"), "--green", 100) +
+      graphCard("VRAM", live.vram_label || "n/a", series("vram_pct").length ? series("vram_pct") : samples.map(function () { return vramPct; }), "--red", 100) +
+      graphCard("Disk", live.disk_label || "n/a", series("disk_pct"), "--blue", 100) +
+      (live.gpu_temp != null ? graphCard("GPU temp", live.gpu_temp + "°C", series("gpu_temp"), "--amber", 100) : "") +
+      (live.gpu_power != null
+        ? graphCard(
+            "Power",
+            live.gpu_power + " W" + (live.gpu_power_limit ? " / " + live.gpu_power_limit : ""),
+            series("gpu_power"),
+            "--accent"
+          )
         : "") +
-      models +
-      hist +
-      "</div>"
+      (live.gpu_fan != null ? graphCard("Fan", live.gpu_fan + "%", series("gpu_fan"), "--muted", 100) : "") +
+      (live.gpu_clock != null ? '<div class="ollama-tr-meta"><span>Clock</span><span>' + live.gpu_clock + " MHz</span></div>" : "") +
+      (loaded || '<p class="general-tab-section-desc">No model in VRAM.</p>') +
+      hist
     );
   }
 
-  function yoursHtml() {
+  function yoursPane() {
     var local = state.local || {};
     var models = local.models || [];
     var rows = models
@@ -359,112 +441,91 @@
         });
         var sel = m.name === state.selected ? " is-selected" : "";
         return (
-          '<div class="ollama-lib-row' +
+          '<div class="ollama-tr' +
           sel +
-          '">' +
-          '<button type="button" class="ollama-lib-row-main" data-act="select" data-name="' +
+          '"><button type="button" class="ollama-tr-main" data-act="select" data-name="' +
           esc(m.name) +
-          '">' +
-          '<div class="ollama-lib-row-title"><span>' +
+          '"><div class="ollama-tr-title" data-no-translate><span>' +
           esc(m.name) +
           "</span>" +
-          (m.loaded ? chip("Loaded", true) : "") +
-          "</div>" +
-          '<div class="ollama-lib-meta"><span>' +
+          (m.loaded ? '<span class="ollama-chip is-on">Loaded</span>' : "") +
+          '</div><div class="ollama-tr-meta"><span>' +
           esc(m.size_label || "") +
           "</span>" +
           (m.parameter_size ? "<span>" + esc(m.parameter_size) + "</span>" : "") +
           (m.quantization ? "<span>" + esc(m.quantization) + "</span>" : "") +
           (m.context_length ? "<span>" + Math.round(m.context_length / 1024) + "k ctx</span>" : "") +
-          (m.loaded && m.size_vram_label ? "<span>" + esc(m.size_vram_label) + " VRAM</span>" : "") +
-          "</div>" +
-          '<div class="ollama-lib-chips">' +
+          '</div><div class="ollama-tr-caps">' +
           ["vision", "tools", "thinking"]
             .filter(function (c) {
               return caps.indexOf(c) >= 0;
             })
             .map(function (c) {
-              return chip(c, true);
+              return '<span class="ollama-chip is-on" data-no-translate>' + icon(c === "vision" ? "eye" : c === "tools" ? "wrench" : "brain") + " " + c + "</span>";
             })
             .join("") +
-          "</div></button>" +
-          '<button type="button" class="settings-btn" data-act="delete" data-name="' +
+          '</div></button><button type="button" class="settings-btn" data-act="delete" data-name="' +
           esc(m.name) +
           '">Delete</button></div>'
         );
       })
       .join("");
-    var tune = "";
-    var st = state.settings;
-    if (state.selected && st && st.ok) {
-      tune = ctxHtml(st) + optSlidersHtml(st);
-    }
-    var strip = "";
-    var live = state.live || {};
-    if (live.thinking || live.running) {
-      strip =
-        '<div class="ollama-lib-tune"><div class="ollama-lib-storage"><span>' +
-        (live.thinking ? "Thinking · " + esc(live.generating_model || "") : "Loaded") +
-        '</span><strong>' +
-        (live.cpu_pct != null ? live.cpu_pct + "% CPU" : "live") +
-        "</strong></div>" +
-        barHtml(live.cpu_pct) +
-        barHtml(live.ram_pct) +
-        "</div>";
-    }
     return (
-      '<div class="llms-provider-card ollama-lib-card">' +
-      strip +
-      '<div class="ollama-lib-storage"><span>Storage</span><strong>' +
-      esc(local.storage_label || "0 B") +
-      "</strong><span class=\"ollama-lib-muted\">" +
-      (local.count || 0) +
-      " model" +
-      ((local.count || 0) === 1 ? "" : "s") +
-      (local.loaded_count ? " · " + local.loaded_count + " loaded" : "") +
-      "</span></div>" +
       (local.error ? '<p class="llms-provider-status-text is-fail">' + esc(local.error) + "</p>" : "") +
-      (models.length ? rows : '<p class="general-tab-section-desc">Nothing pulled yet. Open Library to download a model.</p>') +
-      tune +
-      "</div>"
+      '<div class="ollama-table">' +
+      (rows || '<p class="general-tab-section-desc">Nothing pulled yet. Open Library to download.</p>') +
+      "</div>" +
+      tuneBoard(state.settings)
     );
   }
 
-  function libraryHtml() {
+  function libraryPane() {
     var installed = {};
     ((state.local && state.local.models) || []).forEach(function (m) {
       installed[String(m.name || "").split(":")[0]] = true;
     });
+    var chips = CAPS.map(function (c) {
+      return (
+        '<button type="button" class="ollama-chip' +
+        (state.caps.indexOf(c.id) >= 0 ? " is-on" : "") +
+        '" data-act="cap" data-name="' +
+        c.id +
+        '" data-no-translate title="' +
+        c.label +
+        '">' +
+        icon(c.icon) +
+        " " +
+        c.label +
+        "</button>"
+      );
+    }).join("");
     var cards = (state.catalog || [])
       .map(function (row) {
         var slug = row.slug || "";
         var have = installed[slug.split("/").pop()];
         return (
-          '<div class="ollama-lib-row"><div class="ollama-lib-row-main">' +
-          '<div class="ollama-lib-row-title"><span>' +
+          '<div class="ollama-tr"><div class="ollama-tr-main"><div class="ollama-tr-title" data-no-translate><span>' +
           esc(row.name || slug) +
           "</span>" +
-          (have ? chip("Yours", true) : "") +
+          (have ? '<span class="ollama-chip is-on">Yours</span>' : "") +
           "</div>" +
           (row.description ? '<p class="general-tab-section-desc">' + esc(row.description) + "</p>" : "") +
-          '<div class="ollama-lib-chips">' +
+          '<div class="ollama-tr-caps">' +
           (row.capabilities || [])
             .map(function (c) {
-              return chip(c, true);
+              return '<span class="ollama-chip is-on" data-no-translate>' + esc(c) + "</span>";
             })
             .join("") +
           (row.sizes || [])
             .map(function (s) {
-              return chip(s, false);
+              return '<span class="ollama-chip" data-no-translate>' + esc(s) + "</span>";
             })
             .join("") +
-          "</div>" +
-          '<div class="ollama-lib-meta">' +
-          (row.pulls ? "<span>" + esc(row.pulls) + " Pulls</span>" : "") +
-          (row.tag_count ? "<span>" + esc(row.tag_count) + " Tags</span>" : "") +
-          (row.updated ? "<span>Updated " + esc(row.updated) + "</span>" : "") +
-          "</div></div>" +
-          '<button type="button" class="settings-btn" data-act="pull" data-name="' +
+          '</div><div class="ollama-tr-meta">' +
+          (row.pulls ? "<span>" + esc(row.pulls) + " pulls</span>" : "") +
+          (row.tag_count ? "<span>" + esc(row.tag_count) + " tags</span>" : "") +
+          (row.updated ? "<span>" + esc(row.updated) + "</span>" : "") +
+          '</div></div><button type="button" class="settings-btn" data-act="pull" data-name="' +
           esc(slug) +
           '"' +
           (have ? " disabled" : "") +
@@ -475,57 +536,79 @@
       })
       .join("");
     return (
-      '<div class="llms-provider-card ollama-lib-card">' +
-      '<div class="ollama-lib-search"><input class="settings-input" data-act="query" type="search" placeholder="Search models…" value="' +
+      '<div class="ollama-search">' +
+      icon("search") +
+      '<input class="settings-input" data-act="query" type="search" placeholder="Search models…" value="' +
       esc(state.query) +
-      '" />' +
-      '<button type="button" class="settings-btn" data-act="search"' +
+      '" /><button type="button" class="settings-btn" data-act="search"' +
       (state.busy ? " disabled" : "") +
       ">" +
-      (state.busy ? "Loading…" : "Search") +
+      (state.busy ? "…" : "Search") +
       "</button></div>" +
-      '<div class="ollama-lib-filters">' +
-      CAPS.map(function (id) {
-        return (
-          '<button type="button" class="ollama-lib-chip-btn' +
-          (state.caps.indexOf(id) >= 0 ? " is-on" : "") +
-          '" data-act="cap" data-name="' +
-          id +
-          '">' +
-          id +
-          "</button>"
-        );
-      }).join("") +
-      '<button type="button" class="settings-btn' +
+      '<div class="ollama-filters">' +
+      chips +
+      '<button type="button" class="ollama-chip' +
       (state.order === "popular" ? " is-on" : "") +
       '" data-act="order" data-name="popular">Popular</button>' +
-      '<button type="button" class="settings-btn' +
+      '<button type="button" class="ollama-chip' +
       (state.order === "newest" ? " is-on" : "") +
       '" data-act="order" data-name="newest">Newest</button></div>' +
       (state.error ? '<p class="llms-provider-status-text is-fail">' + esc(state.error) + "</p>" : "") +
-      (cards ||
-        (!state.busy ? '<p class="general-tab-section-desc">No models matched those filters.</p>' : "")) +
+      '<div class="ollama-table">' +
+      (cards || (!state.busy ? '<p class="general-tab-section-desc">No models matched those filters.</p>' : "")) +
       "</div>"
     );
   }
 
-  function renderMount() {
-    var mount = document.getElementById(MOUNT_ID);
-    if (!mount) return;
-    mount.innerHTML =
-      '<h3 class="general-tab-section-title" style="margin:0 0 6px">Models</h3>' +
-      '<p class="general-tab-section-desc">Browse the real Ollama library, download into this server, and manage disk from Yours.</p>' +
-      '<div class="ollama-lib-tabs">' +
+  function boardHtml() {
+    return (
+      '<div class="ollama-board" data-no-translate><div class="ollama-board-head">' +
+      icon("board") +
+      "<h3>Ollama</h3>" +
       '<button type="button" class="settings-btn' +
       (state.tab === "yours" ? " is-on" : "") +
       '" data-act="tab" data-name="yours">Yours</button>' +
       '<button type="button" class="settings-btn' +
       (state.tab === "library" ? " is-on" : "") +
       '" data-act="tab" data-name="library">Library</button>' +
-      '<button type="button" class="settings-btn' +
-      (state.tab === "live" ? " is-on" : "") +
-      '" data-act="tab" data-name="live">Live</button></div>' +
-      (state.tab === "yours" ? yoursHtml() : state.tab === "library" ? libraryHtml() : liveHtml());
+      '<button type="button" class="settings-btn" data-act="board-close">Close</button></div>' +
+      '<div class="ollama-board-main">' +
+      (state.tab === "library" ? libraryPane() : yoursPane()) +
+      '</div><aside class="ollama-board-live">' +
+      livePane() +
+      "</aside></div>"
+    );
+  }
+
+  function renderMount() {
+    var mount = document.getElementById(MOUNT_ID);
+    if (!mount) return;
+    var local = state.local || {};
+    mount.innerHTML =
+      '<div class="ollama-teaser" data-no-translate><div><strong>Ollama board</strong>' +
+      '<span class="general-tab-section-desc">' +
+      esc(local.storage_label || "0 B") +
+      " · " +
+      (local.count || 0) +
+      " models" +
+      (local.loaded_count ? " · " + local.loaded_count + " loaded" : "") +
+      "</span></div>" +
+      '<button type="button" class="settings-btn" data-act="board">' +
+      icon("board") +
+      " Open board</button></div>";
+  }
+
+  function renderBoard() {
+    var old = document.getElementById(BOARD_ID);
+    if (!state.boardOpen) {
+      if (old) old.remove();
+      return;
+    }
+    var box = old || document.createElement("div");
+    box.id = BOARD_ID;
+    box.innerHTML = boardHtml();
+    if (!old) document.body.appendChild(box);
+    startLivePoll();
   }
 
   function renderModal() {
@@ -546,13 +629,13 @@
         "</h3>" +
         '<p class="general-tab-section-desc">' +
         (pull.mode === "terminal"
-          ? "The ollama pull tab in the terminal list is doing the download. This modal shows the same progress."
-          : "Pulling through your Ollama server API. Progress updates here.") +
+          ? "The ollama pull tab in the terminal list is doing the download."
+          : "Pulling through your Ollama server API.") +
         "</p>" +
         '<div class="ollama-lib-progress-track"><i style="width:' +
         pct +
         '%"></i></div>' +
-        '<span class="ollama-lib-muted">' +
+        '<span class="general-tab-section-desc">' +
         (pull.percent != null ? Math.round(pull.percent) + "%" : "…") +
         " · " +
         esc(pull.status || "starting") +
@@ -566,7 +649,7 @@
         '<div class="ollama-lib-dialog"><h3 style="margin:0 0 8px">Delete model</h3>' +
         '<p class="general-tab-section-desc">Remove <strong>' +
         esc(del) +
-        "</strong> from this Ollama server. This frees the disk used by that model.</p>" +
+        "</strong> from this Ollama server.</p>" +
         '<div class="ollama-lib-actions">' +
         '<button type="button" class="settings-btn" data-act="delete-no">Cancel</button>' +
         '<button type="button" class="settings-btn" data-act="delete-yes">Delete</button></div></div>';
@@ -579,20 +662,25 @@
     var st = state.settings;
     var name = state.selected || "";
     if (!name) {
-      pickerMount.innerHTML = '<p class="ollama-lib-muted">Select a model to tune.</p>';
+      pickerMount.innerHTML =
+        '<div class="ollama-picker"><button type="button" class="settings-btn" data-act="board">' +
+        icon("board") +
+        " Open board</button></div>";
       return;
     }
     if (!st || !st.ok) {
-      pickerMount.innerHTML = '<p class="ollama-lib-muted">Loading sliders…</p>';
+      pickerMount.innerHTML = '<p class="general-tab-section-desc">Loading sliders…</p>';
       return;
     }
     pickerMount.innerHTML =
-      '<div class="ollama-picker"><div class="ollama-lib-tune-head"><span>' +
+      '<div class="ollama-picker" data-no-translate><div class="ollama-search"><span data-no-translate>' +
       esc(name) +
-      '</span><span class="ollama-lib-muted">Ollama</span></div>' +
-      ctxHtml(st) +
-      optSlidersHtml(st) +
-      "</div>";
+      '</span><button type="button" class="settings-btn" data-act="board">' +
+      icon("board") +
+      " Board</button></div><div class=\"ollama-faders\">" +
+      ctxFaders(st) +
+      optFaders(st, 3) +
+      "</div></div>";
   }
 
   function maxCtxFor(name) {
@@ -636,8 +724,11 @@
       existing.innerHTML = "";
     }
     mount.id = MOUNT_ID;
+    state.boardOpen = true;
     render();
     if (!state.local) refreshLocal();
+    refreshLive();
+    refreshHistory();
   }
 
   function detachSettings() {
@@ -646,6 +737,8 @@
       el.innerHTML = "";
       el.removeAttribute("id");
     }
+    state.boardOpen = false;
+    renderBoard();
     if (liveTimer) {
       clearInterval(liveTimer);
       liveTimer = 0;
@@ -674,16 +767,20 @@
   function render() {
     renderMount();
     renderPicker();
+    renderBoard();
     renderModal();
   }
 
   function refreshLive() {
     return call("stats.live", {}).then(function (res) {
+      if (res && res.ok && res.vram_total) {
+        res.vram_pct = (100 * (res.vram_used || 0)) / res.vram_total;
+      }
       state.live = res;
       if (res && res.ok) {
-        state.samples = (state.samples || []).concat([res]).slice(-30);
+        state.samples = (state.samples || []).concat([res]).slice(-36);
       }
-      if (state.tab === "live" || (res && res.thinking)) render();
+      if (state.boardOpen || (res && res.thinking)) render();
     });
   }
 
@@ -691,7 +788,7 @@
     return call("history.list", {}).then(function (res) {
       state.history = (res && res.calls) || [];
       if (state.histIndex > state.history.length - 1) state.histIndex = Math.max(0, state.history.length - 1);
-      if (state.tab === "live") render();
+      if (state.boardOpen) render();
     });
   }
 
@@ -742,32 +839,52 @@
     }, 1200);
   }
 
+  function startLivePoll() {
+    if (!state.boardOpen) {
+      if (liveTimer) {
+        clearInterval(liveTimer);
+        liveTimer = 0;
+      }
+      return;
+    }
+    if (liveTimer) return;
+    liveTimer = setInterval(function () {
+      if (!state.boardOpen) return;
+      refreshLive();
+      refreshHistory();
+    }, 2000);
+  }
+
   function onMountClick(ev) {
     var t = ev.target.closest("[data-act]");
     if (!t || !inOllamaUi(t)) return;
     var act = t.getAttribute("data-act");
     var name = t.getAttribute("data-name") || "";
+    if (act === "board") {
+      state.boardOpen = true;
+      render();
+      refreshLive();
+      refreshHistory();
+      if (state.tab === "library" && !state.catalog.length) refreshLibrary();
+      return;
+    }
+    if (act === "board-close") {
+      state.boardOpen = false;
+      render();
+      startLivePoll();
+      return;
+    }
     if (act === "tab") {
       state.tab = name;
       render();
       if (name === "library" && !state.catalog.length) refreshLibrary();
-      if (name === "live") {
-        refreshLive();
-        refreshHistory();
-      }
-      startLivePoll();
       return;
     }
     if (act === "select") {
       state.selected = state.selected === name ? "" : name;
       state.settings = null;
       render();
-      if (state.selected) {
-        var row = ((state.local && state.local.models) || []).filter(function (m) {
-          return m.name === name;
-        })[0];
-        loadSettings(name, row && row.context_length);
-      }
+      if (state.selected) loadSettings(name, maxCtxFor(name));
       return;
     }
     if (act === "delete") {
@@ -806,13 +923,7 @@
       call("settings.set", {
         model: state.selected,
         keep_alive: Number(t.getAttribute("data-value")),
-        max_ctx: ((state.local && state.local.models) || []).filter(function (m) {
-          return m.name === state.selected;
-        })[0]
-          ? ((state.local && state.local.models) || []).filter(function (m) {
-              return m.name === state.selected;
-            })[0].context_length
-          : 0,
+        max_ctx: maxCtxFor(state.selected),
       }).then(function (res) {
         state.settings = res;
         render();
@@ -835,9 +946,9 @@
     }
     if (act === "switch") {
       var cur = ((state.settings && state.settings.options) || {})[t.getAttribute("data-opt")];
-      var opts = {};
-      opts[t.getAttribute("data-opt")] = !cur;
-      call("settings.set", { model: state.selected, options: opts }).then(function (res) {
+      var bag = {};
+      bag[t.getAttribute("data-opt")] = !cur;
+      call("settings.set", { model: state.selected, options: bag }).then(function (res) {
         state.settings = res;
         render();
       });
@@ -867,26 +978,32 @@
       return;
     }
     if (t.getAttribute("data-act") === "opt") {
-      var bag = {};
       var raw = Number(t.value);
       var optId = t.getAttribute("data-opt");
-      bag[optId] = raw;
+      var next = {};
+      next[optId] = raw;
       if (state.settings && state.settings.options) state.settings.options[optId] = raw;
-      var label = t.parentNode && t.parentNode.querySelector(".ollama-lib-muted");
-      if (label) label.textContent = raw;
-      call("settings.set", { model: state.selected, options: bag }).then(function (res) {
+      var fader = t.closest(".ollama-fader");
+      if (fader) {
+        var heat = heatOf(raw, t.min, t.max);
+        fader.style.setProperty("--effort-heat", String(heat));
+        fader.style.setProperty("--slider-color", heatColor(heat));
+        var valEl = fader.querySelector(".ollama-fader-val");
+        if (valEl) valEl.textContent = String(raw);
+      }
+      call("settings.set", { model: state.selected, options: next }).then(function (res) {
         if (res && res.ok) state.settings = res;
       });
       return;
     }
     if (t.getAttribute("data-act") === "ctx") {
       var ticks = (state.settings && state.settings.ticks) || [];
-      var next = ticks[Number(t.value)];
-      if (!next || !state.selected) return;
+      var nxt = ticks[Number(t.value)];
+      if (!nxt || !state.selected) return;
       call("settings.set", {
         model: state.selected,
-        num_ctx: next,
-        max_ctx: ticks[ticks.length - 1] || next,
+        num_ctx: nxt,
+        max_ctx: ticks[ticks.length - 1] || nxt,
       }).then(function (res) {
         state.settings = res;
         render();
@@ -933,22 +1050,6 @@
     }
   }
 
-  function startLivePoll() {
-    if (state.tab !== "live") {
-      if (liveTimer) {
-        clearInterval(liveTimer);
-        liveTimer = 0;
-      }
-      return;
-    }
-    if (liveTimer) return;
-    liveTimer = setInterval(function () {
-      if (!ollamaSlide() || state.tab !== "live") return;
-      refreshLive();
-      refreshHistory();
-    }, 2000);
-  }
-
   function trySlotsOnce() {
     var settings = ollamaSlide();
     if (settings) attachSettings(settings);
@@ -964,6 +1065,11 @@
     if (ev.key === "Enter" && ev.target && ev.target.getAttribute && ev.target.getAttribute("data-act") === "query") {
       ev.preventDefault();
       refreshLibrary();
+    }
+    if (ev.key === "Escape" && state.boardOpen && !state.pull && !state.deleteName) {
+      state.boardOpen = false;
+      render();
+      startLivePoll();
     }
   });
 
@@ -984,6 +1090,8 @@
     document.removeEventListener("input", onMountInput);
     var modal = document.getElementById(MODAL_ID);
     if (modal) modal.remove();
+    var board = document.getElementById(BOARD_ID);
+    if (board) board.remove();
     var style = document.getElementById(STYLE_ID);
     if (style) style.remove();
   };

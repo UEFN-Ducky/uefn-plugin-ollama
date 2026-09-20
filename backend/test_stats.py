@@ -25,6 +25,9 @@ def test_live_stats_shape() -> None:
     assert "cpu_pct" in out
     assert "ram_pct" in out
     assert "ram_label" in out
+    assert "disk_pct" in out
+    assert "disk_label" in out
+    assert "cpu_count" in out
     assert out["models"][0]["name"] == "llama3.2:latest"
 
 
