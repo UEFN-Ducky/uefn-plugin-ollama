@@ -8,7 +8,6 @@
   var PLUGIN_ID = "ollama";
   var MOUNT_ID = "ollama-library-mount";
   var STYLE_ID = "ollama-library-style";
-  var MODAL_ID = "ollama-library-modal";
   var CAPS = [
     { id: "vision", label: "Vision", icon: "eye" },
     { id: "tools", label: "Tools", icon: "wrench" },
@@ -119,16 +118,11 @@
       ".ollama-tr-title{display:flex;align-items:center;gap:8px;font-weight:600;color:var(--text)}",
       ".ollama-tr-meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px;color:var(--muted);font-size:12px}",
       ".ollama-tr-caps{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}",
-      "#ollama-library-modal{position:fixed;inset:0;z-index:100050;display:flex;align-items:center;justify-content:center;background:color-mix(in srgb,var(--bg) 55%,transparent)}",
-      "#ollama-library-modal .ollama-lib-dialog{width:min(480px,calc(100vw - 32px));background:var(--card);border:1px solid var(--border);border-radius:var(--radius,12px);padding:20px;color:var(--text)}",
-      ".ollama-lib-progress-track{height:6px;border-radius:999px;background:var(--hover);overflow:hidden;margin:8px 0}",
-      ".ollama-lib-progress-track i{display:block;height:100%;background:var(--accent)}",
-      ".ollama-lib-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}",
-      ".ollama-board{width:100%;height:min(680px,calc(100vh - 220px));display:grid;grid-template-columns:280px minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);background:color-mix(in srgb,var(--card) 70%,var(--bg));border:1px solid var(--border);border-radius:12px;overflow:hidden;color:var(--text)}",
-      ".ollama-board-head{grid-column:1/-1;display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border)}",
+      ".ollama-board{width:100%;height:min(680px,calc(100vh - 220px));display:flex;flex-direction:column;background:color-mix(in srgb,var(--card) 70%,var(--bg));border:1px solid var(--border);border-radius:12px;overflow:hidden;color:var(--text)}",
+      ".ollama-board-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border)}",
       ".ollama-board-head h3{margin:0;flex:1;font-size:14px}",
-      ".ollama-board-main,.ollama-board-live{min-height:0;overflow:auto;padding:12px}",
-      ".ollama-board-live{border-right:1px solid var(--border);background:color-mix(in srgb,var(--bg) 55%,var(--card))}",
+      ".ollama-board-main{min-height:0;flex:1;overflow:auto;padding:12px}",
+      ".ollama-row-actions{display:flex;gap:6px;flex-shrink:0}",
       ".ollama-faders{display:grid;grid-template-columns:repeat(auto-fill,minmax(76px,1fr));gap:8px;margin:10px 0}",
       ".ollama-fader{display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 6px 8px;border:1px solid var(--border);border-radius:10px;background:color-mix(in srgb,var(--card) 80%,var(--bg))}",
       ".ollama-fader-label{font-size:10px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);text-align:center}",
@@ -458,9 +452,15 @@
               return '<span class="ollama-chip is-on" data-no-translate>' + icon(c === "vision" ? "eye" : c === "tools" ? "wrench" : "brain") + " " + c + "</span>";
             })
             .join("") +
-          '</div></button><button type="button" class="settings-btn" data-act="delete" data-name="' +
-          esc(m.name) +
-          '">Delete</button></div>'
+          '</div></button><div class="ollama-row-actions">' +
+          (state.deleteName === m.name
+            ? '<button type="button" class="settings-btn" data-act="delete-no">Cancel</button><button type="button" class="settings-btn" data-act="delete-yes" data-name="' +
+              esc(m.name) +
+              '">Delete</button>'
+            : '<button type="button" class="settings-btn" data-act="delete" data-name="' +
+              esc(m.name) +
+              '">Delete</button>') +
+          "</div></div>"
         );
       })
       .join("");
@@ -564,11 +564,12 @@
       '" data-act="tab" data-name="yours">Yours</button>' +
       '<button type="button" class="settings-btn' +
       (state.tab === "library" ? " is-on" : "") +
-      '" data-act="tab" data-name="library">Library</button></div>' +
-      '<aside class="ollama-board-live">' +
-      livePane() +
-      '</aside><div class="ollama-board-main">' +
-      (state.tab === "library" ? libraryPane() : yoursPane()) +
+      '" data-act="tab" data-name="library">Library</button>' +
+      '<button type="button" class="settings-btn' +
+      (state.tab === "stats" ? " is-on" : "") +
+      '" data-act="tab" data-name="stats">Stats</button></div>' +
+      '<div class="ollama-board-main">' +
+      (state.tab === "library" ? libraryPane() : state.tab === "stats" ? livePane() : yoursPane()) +
       "</div></div>"
     );
   }
@@ -580,50 +581,23 @@
     startLivePoll();
   }
 
-  function renderModal() {
-    var old = document.getElementById(MODAL_ID);
-    var pull = state.pull;
-    var del = state.deleteName;
-    if (!pull && !del) {
-      if (old) old.remove();
+  function emitPullJob(pull) {
+    if (!pull) return;
+    var job = {
+      id: "ollama-pull:" + (pull.job_id || pull.model || "job"),
+      source: "ollama",
+      title: "Download " + (pull.model || "model"),
+      detail: pull.error || pull.status || (pull.mode === "terminal" ? "Terminal pull" : "Ollama API"),
+      percent: pull.percent,
+      phase: pull.error ? "error" : pull.done ? "done" : "working",
+      cancelable: !pull.done && !pull.error,
+    };
+    var host = window.__duckyPluginHost;
+    if (host && host.jobs && typeof host.jobs.upsert === "function") {
+      host.jobs.upsert(job);
       return;
     }
-    var box = old || document.createElement("div");
-    box.id = MODAL_ID;
-    if (pull) {
-      var pct = pull.percent == null ? 0 : Math.max(0, Math.min(100, pull.percent));
-      box.innerHTML =
-        '<div class="ollama-lib-dialog"><h3 style="margin:0 0 8px">Download ' +
-        esc(pull.model || "") +
-        "</h3>" +
-        '<p class="general-tab-section-desc">' +
-        (pull.mode === "terminal"
-          ? "The ollama pull tab in the terminal list is doing the download."
-          : "Pulling through your Ollama server API.") +
-        "</p>" +
-        '<div class="ollama-lib-progress-track"><i style="width:' +
-        pct +
-        '%"></i></div>' +
-        '<span class="general-tab-section-desc">' +
-        (pull.percent != null ? Math.round(pull.percent) + "%" : "…") +
-        " · " +
-        esc(pull.status || "starting") +
-        "</span>" +
-        (pull.error ? '<p class="llms-provider-status-text is-fail">' + esc(pull.error) + "</p>" : "") +
-        '<div class="ollama-lib-actions"><button type="button" class="settings-btn" data-act="pull-close">' +
-        (pull.done ? "Done" : "Cancel") +
-        "</button></div></div>";
-    } else {
-      box.innerHTML =
-        '<div class="ollama-lib-dialog"><h3 style="margin:0 0 8px">Delete model</h3>' +
-        '<p class="general-tab-section-desc">Remove <strong>' +
-        esc(del) +
-        "</strong> from this Ollama server.</p>" +
-        '<div class="ollama-lib-actions">' +
-        '<button type="button" class="settings-btn" data-act="delete-no">Cancel</button>' +
-        '<button type="button" class="settings-btn" data-act="delete-yes">Delete</button></div></div>';
-    }
-    if (!old) document.body.appendChild(box);
+    window.dispatchEvent(new CustomEvent("ducky:background-job", { detail: job }));
   }
 
   function renderPicker() {
@@ -730,7 +704,6 @@
   function render() {
     renderMount();
     renderPicker();
-    renderModal();
   }
 
   function refreshLive() {
@@ -791,7 +764,8 @@
       if (!state.pull || !state.pull.job_id) return;
       call("pull.status", { job_id: state.pull.job_id }).then(function (st) {
         state.pull = st;
-        render();
+        emitPullJob(st);
+        if (state.boardOpen) render();
         if (st && st.done) {
           clearInterval(pullTimer);
           pullTimer = 0;
@@ -802,7 +776,7 @@
   }
 
   function startLivePoll() {
-    if (!state.boardOpen) {
+    if (!state.boardOpen || state.tab !== "stats") {
       if (liveTimer) {
         clearInterval(liveTimer);
         liveTimer = 0;
@@ -811,7 +785,7 @@
     }
     if (liveTimer) return;
     liveTimer = setInterval(function () {
-      if (!state.boardOpen) return;
+      if (!state.boardOpen || state.tab !== "stats") return;
       refreshLive();
       refreshHistory();
     }, 2000);
@@ -826,6 +800,14 @@
       state.tab = name;
       render();
       if (name === "library" && !state.catalog.length) refreshLibrary();
+      if (name === "stats") {
+        refreshLive();
+        refreshHistory();
+        startLivePoll();
+      } else if (liveTimer) {
+        clearInterval(liveTimer);
+        liveTimer = 0;
+      }
       return;
     }
     if (act === "select") {
@@ -840,10 +822,30 @@
       render();
       return;
     }
+    if (act === "delete-no") {
+      state.deleteName = "";
+      render();
+      return;
+    }
+    if (act === "delete-yes") {
+      var doomed = name || state.deleteName;
+      call("local.delete", { name: doomed }).then(function (res) {
+        if (res && res.ok) {
+          if (state.selected === doomed) state.selected = "";
+          state.deleteName = "";
+          refreshLocal();
+        } else {
+          state.local = state.local || { ok: false };
+          state.local.error = (res && res.error) || "Delete failed";
+          render();
+        }
+      });
+      return;
+    }
     if (act === "pull") {
       call("pull.start", { name: name }).then(function (res) {
         state.pull = res;
-        render();
+        emitPullJob(res);
         startPullPoll();
       });
       return;
@@ -959,42 +961,24 @@
     }
   }
 
-  function onModalClick(ev) {
-    var t = ev.target.closest("[data-act]");
-    if (!t) return;
-    var box = document.getElementById(MODAL_ID);
-    if (!box || !box.contains(t)) return;
-    var act = t.getAttribute("data-act");
-    if (act === "pull-close") {
-      if (state.pull && state.pull.job_id && !state.pull.done) {
-        call("pull.cancel", { job_id: state.pull.job_id });
-      }
-      state.pull = null;
-      if (pullTimer) {
-        clearInterval(pullTimer);
-        pullTimer = 0;
-      }
-      render();
-      return;
-    }
-    if (act === "delete-no") {
-      state.deleteName = "";
-      render();
-      return;
-    }
-    if (act === "delete-yes") {
-      var doomed = state.deleteName;
-      call("local.delete", { name: doomed }).then(function (res) {
-        if (res && res.ok) {
-          if (state.selected === doomed) state.selected = "";
-          state.deleteName = "";
-          refreshLocal();
-        } else {
-          state.local = state.local || { ok: false };
-          state.local.error = (res && res.error) || "Delete failed";
-          render();
-        }
-      });
+  function onJobAction(ev) {
+    var d = (ev && ev.detail) || {};
+    if (d.action !== "cancel" || !state.pull || !state.pull.job_id) return;
+    var want = "ollama-pull:" + state.pull.job_id;
+    if (d.id !== want && d.id !== "ollama-pull:" + (state.pull.model || "")) return;
+    call("pull.cancel", { job_id: state.pull.job_id });
+    emitPullJob({
+      job_id: state.pull.job_id,
+      model: state.pull.model,
+      status: "cancelled",
+      done: true,
+      error: "Cancelled",
+      percent: state.pull.percent,
+    });
+    state.pull = null;
+    if (pullTimer) {
+      clearInterval(pullTimer);
+      pullTimer = 0;
     }
   }
 
@@ -1006,24 +990,16 @@
   }
 
   document.addEventListener("click", onMountClick);
-  document.addEventListener("click", onModalClick);
   document.addEventListener("input", onMountInput);
   window.addEventListener("ducky:llm-slot", onLlmSlot);
+  window.addEventListener("ducky:background-job-action", onJobAction);
   document.addEventListener("keydown", function (ev) {
     if (ev.key === "Enter" && ev.target && ev.target.getAttribute && ev.target.getAttribute("data-act") === "query") {
       ev.preventDefault();
       refreshLibrary();
     }
-    if (ev.key === "Escape" && (state.pull || state.deleteName)) {
-      if (state.pull && state.pull.job_id && !state.pull.done) {
-        call("pull.cancel", { job_id: state.pull.job_id });
-      }
-      state.pull = null;
+    if (ev.key === "Escape" && state.deleteName) {
       state.deleteName = "";
-      if (pullTimer) {
-        clearInterval(pullTimer);
-        pullTimer = 0;
-      }
       render();
     }
   });
@@ -1033,6 +1009,7 @@
   window.__duckyPluginBootCleanups = window.__duckyPluginBootCleanups || {};
   window.__duckyPluginBootCleanups[PLUGIN_ID] = function () {
     window.removeEventListener("ducky:llm-slot", onLlmSlot);
+    window.removeEventListener("ducky:background-job-action", onJobAction);
     if (pullTimer) clearInterval(pullTimer);
     if (liveTimer) {
       clearInterval(liveTimer);
@@ -1041,10 +1018,7 @@
     detachPicker();
     detachSettings();
     document.removeEventListener("click", onMountClick);
-    document.removeEventListener("click", onModalClick);
     document.removeEventListener("input", onMountInput);
-    var modal = document.getElementById(MODAL_ID);
-    if (modal) modal.remove();
     var style = document.getElementById(STYLE_ID);
     if (style) style.remove();
   };
