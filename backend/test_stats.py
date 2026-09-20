@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+
 try:
     from . import stats
 except ImportError:
@@ -25,6 +28,14 @@ def test_live_stats_shape() -> None:
     assert out["models"][0]["name"] == "llama3.2:latest"
 
 
+def test_hidden_popen_hides_windows_console() -> None:
+    kw = stats._hidden_popen_kwargs()
+    if os.name == "nt":
+        assert kw.get("creationflags") == getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+    else:
+        assert kw == {}
+
+
 def test_idle_when_not_generating() -> None:
     stats._ps = lambda _base: []
     stats.set_generating("")
@@ -37,5 +48,6 @@ def test_idle_when_not_generating() -> None:
 
 if __name__ == "__main__":
     test_live_stats_shape()
+    test_hidden_popen_hides_windows_console()
     test_idle_when_not_generating()
     print("ok")

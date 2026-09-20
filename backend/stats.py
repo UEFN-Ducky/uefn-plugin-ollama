@@ -18,6 +18,25 @@ except ImportError:
 _CPU_PREV: tuple[float, float] | None = None  # (idle, total)
 _CPU_PCT = 0.0
 _GENERATING = ""
+_GPU_CACHE: tuple[float, dict[str, Any]] | None = None
+_GPU_MISS = False
+_GPU_TTL = 2.0
+_EMPTY_GPU = {"gpu_pct": None, "vram_used": 0, "vram_total": 0, "vram_label": ""}
+
+
+def _hidden_popen_kwargs() -> dict[str, Any]:
+    """Windows: never flash a console for nvidia-smi."""
+    if os.name != "nt":
+        return {}
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+    kw: dict[str, Any] = {"creationflags": flags}
+    try:
+        info = subprocess.STARTUPINFO()
+        info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        kw["startupinfo"] = info
+    except (AttributeError, OSError):
+        pass
+    return kw
 
 
 def _mem() -> dict[str, Any]:
@@ -132,9 +151,16 @@ def _cpu_windows() -> float:
 
 
 def _gpu() -> dict[str, Any]:
+    global _GPU_CACHE, _GPU_MISS
+    if _GPU_MISS:
+        return dict(_EMPTY_GPU)
+    now = time.time()
+    if _GPU_CACHE and now - _GPU_CACHE[0] < _GPU_TTL:
+        return dict(_GPU_CACHE[1])
     exe = shutil.which("nvidia-smi")
     if not exe:
-        return {"gpu_pct": None, "vram_used": 0, "vram_total": 0, "vram_label": ""}
+        _GPU_MISS = True
+        return dict(_EMPTY_GPU)
     try:
         out = subprocess.check_output(
             [
@@ -145,9 +171,11 @@ def _gpu() -> dict[str, Any]:
             timeout=2.0,
             text=True,
             stderr=subprocess.DEVNULL,
+            **_hidden_popen_kwargs(),
         )
     except (OSError, subprocess.SubprocessError):
-        return {"gpu_pct": None, "vram_used": 0, "vram_total": 0, "vram_label": ""}
+        _GPU_MISS = True
+        return dict(_EMPTY_GPU)
     line = (out or "").splitlines()[0] if out else ""
     parts = [p.strip() for p in line.split(",")]
     try:
@@ -155,13 +183,16 @@ def _gpu() -> dict[str, Any]:
         used = int(float(parts[1]) * 1024 * 1024)
         total = int(float(parts[2]) * 1024 * 1024)
     except (IndexError, ValueError):
-        return {"gpu_pct": None, "vram_used": 0, "vram_total": 0, "vram_label": ""}
-    return {
+        _GPU_MISS = True
+        return dict(_EMPTY_GPU)
+    row = {
         "gpu_pct": pct,
         "vram_used": used,
         "vram_total": total,
         "vram_label": f"{format_bytes(used)} / {format_bytes(total)}",
     }
+    _GPU_CACHE = (now, row)
+    return dict(row)
 
 
 def set_generating(model: str = "") -> None:

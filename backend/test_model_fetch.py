@@ -64,6 +64,30 @@ def test_fetch_models_uses_tags_only() -> None:
     httpx.post.assert_not_called()
 
 
+def test_show_payload_vision_from_api_only() -> None:
+    model_fetch = _load_plugin_fetch()
+    qwen = model_fetch.parse_show_payload(
+        {
+            "capabilities": ["completion", "vision", "tools", "thinking"],
+            "model_info": {"qwen35.context_length": 262144},
+            "parameters": "temperature 0.6\ntop_p 0.95\nmin_p 0",
+            "projector_info": {"clip.has_vision_encoder": True},
+        }
+    )
+    assert "vision" in qwen["capabilities"]
+    assert qwen["context_length"] == 262144
+    assert qwen["parameters"]["temperature"] == 0.6
+    row = model_fetch.model_from_show("qwen3.8:latest", qwen)
+    assert row.supports_vision and row.supports_tools and row.thinking_menu
+    projector_only = model_fetch.parse_show_payload(
+        {"capabilities": ["completion"], "projector_info": {"clip.vision.block_count": 27}}
+    )
+    assert "vision" in projector_only["capabilities"]
+    text_only = model_fetch.parse_show_payload({"capabilities": ["completion"]})
+    assert "vision" not in text_only["capabilities"]
+    assert not model_fetch.model_from_show("plain", text_only).supports_vision
+
+
 def test_enrich_thinking_only_when_capability() -> None:
     model_fetch = _load_plugin_fetch()
     thinking = model_fetch.model_from_show(
@@ -82,5 +106,6 @@ def test_enrich_thinking_only_when_capability() -> None:
 
 if __name__ == "__main__":
     test_fetch_models_uses_tags_only()
+    test_show_payload_vision_from_api_only()
     test_enrich_thinking_only_when_capability()
     print("ok")

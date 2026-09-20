@@ -4,22 +4,23 @@ from __future__ import annotations
 
 from typing import Any
 
-CTX_TICKS = (4096, 8192, 16384, 32768, 65536, 131072, 262144)
-CTX_LABELS = {
-    4096: "4k",
-    8192: "8k",
-    16384: "16k",
-    32768: "32k",
-    65536: "64k",
-    131072: "128k",
-    262144: "256k",
-}
+def _tick_label(n: int) -> str:
+    if n >= 1024 and n % 1024 == 0:
+        return f"{n // 1024}k"
+    return str(n)
 
 
 def ticks_for_max(max_ctx: int) -> list[int]:
+    """Powers of two up to /api/show context_length — never invent a bigger window."""
     cap = max(1, int(max_ctx or 0))
-    ticks = [t for t in CTX_TICKS if t <= cap]
-    return ticks or [cap]
+    ticks: list[int] = []
+    t = 4096
+    while t < cap and len(ticks) < 12:
+        ticks.append(t)
+        t *= 2
+    if not ticks or ticks[-1] != cap:
+        ticks.append(cap)
+    return ticks
 
 
 def clamp_num_ctx(value: int, max_ctx: int) -> int:
@@ -132,13 +133,35 @@ def saved_opt(model: str, opt_id: str) -> Any:
     return _clamp_opt(opt_id, raw)
 
 
+def _api_show(model: str) -> dict[str, Any]:
+    try:
+        from backend.agent.secrets import get_key
+
+        from .model_fetch import ollama_model_info
+        from .ollama_url import normalize_ollama_base
+
+        base = normalize_ollama_base(get_key("ollama") or "")
+        return ollama_model_info(base, model)
+    except Exception:
+        return {}
+
+
 def saved_options(model: str) -> dict[str, Any]:
+    api_defaults = {}
+    show = _api_show(model)
+    raw = show.get("parameters") if isinstance(show, dict) else None
+    if isinstance(raw, dict):
+        api_defaults = raw
     out: dict[str, Any] = {}
     for row in OPT_SLIDERS:
         val = saved_opt(model, row["id"])
+        if val is None and row["id"] in api_defaults:
+            val = _clamp_opt(row["id"], api_defaults[row["id"]])
         out[row["id"]] = row["default"] if val is None else val
     for row in OPT_SWITCHES:
         val = saved_opt(model, row["id"])
+        if val is None and row["id"] in api_defaults:
+            val = _clamp_opt(row["id"], api_defaults[row["id"]])
         out[row["id"]] = row["default"] if val is None else bool(val)
     return out
 
@@ -156,9 +179,16 @@ def saved_keep_alive(model: str) -> int | None:
 
 def get_model_settings(model: str, max_ctx: int = 0) -> dict[str, Any]:
     name = (model or "").strip()
-    ticks = ticks_for_max(max_ctx) if max_ctx else list(CTX_TICKS)
+    show = _api_show(name) if name else {}
+    api_ctx = 0
+    try:
+        api_ctx = int(show.get("context_length") or 0)
+    except (TypeError, ValueError):
+        api_ctx = 0
+    cap = max(int(max_ctx or 0), api_ctx)
+    ticks = ticks_for_max(cap) if cap else [4096]
     saved = saved_num_ctx(name)
-    num_ctx = clamp_num_ctx(saved or (max_ctx or ticks[-1]), max_ctx or ticks[-1]) if max_ctx else saved
+    num_ctx = clamp_num_ctx(saved or (cap or ticks[-1]), cap or ticks[-1]) if cap else saved
     ka = saved_keep_alive(name)
     opts = saved_options(name)
     return {
@@ -167,7 +197,7 @@ def get_model_settings(model: str, max_ctx: int = 0) -> dict[str, Any]:
         "num_ctx": num_ctx,
         "keep_alive": -1 if ka is None else ka,
         "ticks": ticks,
-        "tick_labels": [CTX_LABELS.get(t, str(t)) for t in ticks],
+        "tick_labels": [_tick_label(t) for t in ticks],
         "options": opts,
         "sliders": list(OPT_SLIDERS),
         "switches": list(OPT_SWITCHES),

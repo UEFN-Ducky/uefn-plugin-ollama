@@ -2,14 +2,33 @@
 
 from __future__ import annotations
 
-from .ollama_provider import (
-    _HEADROOM_TOKENS,
-    _IMAGE_TOKENS_EACH,
-    _attachment_tokens,
-    _estimate_prompt_tokens,
-    _pinned_num_ctx,
-    clear_num_ctx_ratchet,
-)
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+APP = ROOT.parents[1] / "UEFN-Ducky-Release" / "ducky_app"
+if APP.is_dir() and str(APP) not in sys.path:
+    sys.path.insert(0, str(APP))
+sys.path.insert(0, str(ROOT / "backend"))
+
+try:
+    from .ollama_provider import (
+        _HEADROOM_TOKENS,
+        _IMAGE_TOKENS_EACH,
+        _attachment_tokens,
+        _estimate_prompt_tokens,
+        _pinned_num_ctx,
+        clear_num_ctx_ratchet,
+    )
+except ImportError:
+    from ollama_provider import (
+        _HEADROOM_TOKENS,
+        _IMAGE_TOKENS_EACH,
+        _attachment_tokens,
+        _estimate_prompt_tokens,
+        _pinned_num_ctx,
+        clear_num_ctx_ratchet,
+    )
 
 
 class _Att:
@@ -51,3 +70,10 @@ def test_estimate_counts_images():
     est = _estimate_prompt_tokens("sys", msgs, [])  # type: ignore[arg-type]
     assert est >= 2 * _IMAGE_TOKENS_EACH
     assert _attachment_tokens([_Att("image")]) == _IMAGE_TOKENS_EACH
+
+
+if __name__ == "__main__":
+    test_pin_matches_host_high_water()
+    test_pin_never_resizes()
+    test_estimate_counts_images()
+    print("ok")

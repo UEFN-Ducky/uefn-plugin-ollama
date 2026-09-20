@@ -630,6 +630,7 @@
         refreshLive();
         refreshHistory();
       }
+      startLivePoll();
       return;
     }
     if (act === "select") {
@@ -820,13 +821,23 @@
     scroll.appendChild(mount);
     render();
     if (!state.local) refreshLocal();
-    if (!liveTimer) {
-      liveTimer = setInterval(function () {
-        if (!ollamaSlide()) return;
-        refreshLive();
-        if (state.tab === "live") refreshHistory();
-      }, 1500);
+    startLivePoll();
+  }
+
+  function startLivePoll() {
+    if (state.tab !== "live") {
+      if (liveTimer) {
+        clearInterval(liveTimer);
+        liveTimer = 0;
+      }
+      return;
     }
+    if (liveTimer) return;
+    liveTimer = setInterval(function () {
+      if (!ollamaSlide() || state.tab !== "live") return;
+      refreshLive();
+      refreshHistory();
+    }, 2000);
   }
 
   function tick() {
@@ -835,6 +846,10 @@
     else {
       var orphan = document.getElementById(MOUNT_ID);
       if (orphan) orphan.remove();
+      if (liveTimer) {
+        clearInterval(liveTimer);
+        liveTimer = 0;
+      }
     }
   }
 

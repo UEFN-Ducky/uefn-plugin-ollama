@@ -134,7 +134,7 @@ def register(api) -> None:
         ),
         fetch_models=_fetch_models,
         fetch_usage=_fetch_usage,
-        test_key_model="llama3.2",
+        test_key_model="",
         tool_schema="openai",
         key_optional=True,
         normalize_secret=_normalize_secret,
