@@ -1,10 +1,10 @@
 {
   "id": "ollama",
   "kind": "plugin",
-  "version": "1.0.41",
+  "version": "1.0.42",
   "label": "Ollama",
-  "description": "Local Ollama gateway for Settings → LLMs. Point at your Ollama server URL (default http://localhost:11434). Install from Store → Gateways, then enable to show the Ollama row under Providers & Keys.",
-    "min_app_version": "1.2.160",
+  "description": "Local Ollama gateway for Settings \u2192 LLMs. Point at your Ollama server URL (default http://localhost:11434). Install from Store \u2192 Gateways, then enable to show the Ollama row under Providers & Keys.",
+  "min_app_version": "1.2.160",
   "default_enabled": true,
   "secret_keys": [
     "ollama"
@@ -78,6 +78,83 @@
           "body": "Press Back to return to the provider list.",
           "advance": "require_click",
           "mode": "rect"
+        }
+      ]
+    },
+    "automations": {
+      "nodes": [
+        {
+          "id": "ollama.complete",
+          "label": "Ollama complete",
+          "group": "Ollama",
+          "description": "One-shot prompt through the Ollama gateway. Writes text onto the run.",
+          "config_fields": [
+            {
+              "id": "prompt",
+              "label": "Prompt",
+              "type": "textarea"
+            },
+            {
+              "id": "model",
+              "label": "Model",
+              "type": "model",
+              "provider": "ollama"
+            }
+          ]
+        }
+      ],
+      "templates": [
+        {
+          "id": "ollama-complete",
+          "label": "Ollama complete",
+          "icon": "\u2728",
+          "systems": [
+            "pipeline"
+          ],
+          "description": "Chat prompt through Ollama, then finish.",
+          "graph": {
+            "nodes": [
+              {
+                "id": "s",
+                "type": "start.chat",
+                "x": 40,
+                "y": 80,
+                "config": {},
+                "label": "Chat",
+                "description": ""
+              },
+              {
+                "id": "c",
+                "type": "ollama.complete",
+                "x": 280,
+                "y": 80,
+                "config": {},
+                "label": "Complete",
+                "description": ""
+              },
+              {
+                "id": "f",
+                "type": "pipeline.finish",
+                "x": 520,
+                "y": 80,
+                "config": {},
+                "label": "Finish",
+                "description": ""
+              }
+            ],
+            "edges": [
+              {
+                "source": "s",
+                "target": "c",
+                "kind": "main"
+              },
+              {
+                "source": "c",
+                "target": "f",
+                "kind": "main"
+              }
+            ]
+          }
         }
       ]
     }

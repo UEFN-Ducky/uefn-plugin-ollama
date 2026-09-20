@@ -261,4 +261,7 @@ def register(api) -> None:
             )
         )
 
+    from . import graph_nodes
+
+    graph_nodes.register_nodes(api)
     api.log("Ollama gateway contribution active (Providers)")
