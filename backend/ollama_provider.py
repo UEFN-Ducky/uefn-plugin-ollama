@@ -219,14 +219,44 @@ def _estimate_prompt_tokens(
     return max(1, tokens)
 
 
+def vram_safe_ctx_cap(model_max: int, *, vram_bytes: int | None = None) -> int:
+    """KV cache must fit next to weights. 8GB + 8B @ 65k spills to CPU → 30min eval."""
+    cap = max(1, int(model_max))
+    total = vram_bytes
+    if total is None:
+        try:
+            from .stats import _gpu
+
+            total = int((_gpu(allow_probe=True) or {}).get("vram_total") or 0)
+        except Exception:
+            total = 0
+    gb = (int(total) / (1024 ** 3)) if total else 0.0
+    # Unknown GPU: stay at 32k. Known cards: leave room for Q4 8B (~5GB) + KV.
+    if gb <= 8.5:
+        hard = 32_768
+    elif gb <= 12.5:
+        hard = 65_536
+    elif gb <= 16.5:
+        hard = 131_072
+    else:
+        hard = cap
+    return min(cap, hard)
+
+
 def _pinned_num_ctx(base_url: str, model: str, model_max: int) -> int:
-    """Allocate num_ctx once from slider or host high-water; never resize mid-chat."""
+    """Allocate num_ctx once from slider or host high-water; never grow mid-chat.
+
+    May snap *down* when VRAM cannot hold the saved window (65k on 8GB).
+    """
     key = f"{(base_url or '').rstrip('/')}|{(model or '').strip()}"
     max_ctx = max(1, int(model_max))
+    vram_cap = vram_safe_ctx_cap(max_ctx)
     with _ratchet_lock:
         prev = int(_num_ctx_ratchet.get(key) or 0)
         if prev > 0:
-            return min(prev, max_ctx)
+            chosen = min(prev, max_ctx, vram_cap)
+            _num_ctx_ratchet[key] = chosen
+            return chosen
         saved = None
         try:
             from .settings_store import clamp_num_ctx, saved_num_ctx
@@ -245,7 +275,7 @@ def _pinned_num_ctx(base_url: str, model: str, model_max: int) -> int:
                 chosen = epoch_num_ctx(max_ctx)
             except Exception:
                 chosen = min(max_ctx, 80_000 + _HEADROOM_TOKENS)
-        chosen = min(max(1, int(chosen)), max_ctx)
+        chosen = min(max(1, int(chosen)), max_ctx, vram_cap)
         _num_ctx_ratchet[key] = chosen
         return chosen
 

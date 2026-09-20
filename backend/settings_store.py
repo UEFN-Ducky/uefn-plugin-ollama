@@ -189,6 +189,13 @@ def get_model_settings(model: str, max_ctx: int = 0) -> dict[str, Any]:
     ticks = ticks_for_max(cap) if cap else [4096]
     saved = saved_num_ctx(name)
     num_ctx = clamp_num_ctx(saved or (cap or ticks[-1]), cap or ticks[-1]) if cap else saved
+    if num_ctx:
+        try:
+            from .ollama_provider import vram_safe_ctx_cap
+
+            num_ctx = min(int(num_ctx), vram_safe_ctx_cap(cap or int(num_ctx)))
+        except Exception:
+            pass
     ka = saved_keep_alive(name)
     opts = saved_options(name)
     return {
@@ -218,7 +225,17 @@ def set_model_settings(
         return {"ok": False, "error": "Model name required"}
     prefs = _prefs()
     if num_ctx is not None:
-        prefs[f"num_ctx:{name}"] = clamp_num_ctx(int(num_ctx), max_ctx or int(num_ctx))
+        snapped = clamp_num_ctx(int(num_ctx), max_ctx or int(num_ctx))
+        try:
+            from .ollama_provider import vram_safe_ctx_cap
+
+            snapped = clamp_num_ctx(
+                min(snapped, vram_safe_ctx_cap(max_ctx or snapped)),
+                max_ctx or snapped,
+            )
+        except Exception:
+            pass
+        prefs[f"num_ctx:{name}"] = snapped
     if keep_alive is not None:
         prefs[f"keep_alive:{name}"] = int(keep_alive)
     bag = dict(options or {})

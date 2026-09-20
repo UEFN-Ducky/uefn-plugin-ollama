@@ -17,8 +17,10 @@ try:
         _IMAGE_TOKENS_EACH,
         _attachment_tokens,
         _estimate_prompt_tokens,
+        _num_ctx_ratchet,
         _pinned_num_ctx,
         clear_num_ctx_ratchet,
+        vram_safe_ctx_cap,
     )
 except ImportError:
     from ollama_provider import (
@@ -26,8 +28,10 @@ except ImportError:
         _IMAGE_TOKENS_EACH,
         _attachment_tokens,
         _estimate_prompt_tokens,
+        _num_ctx_ratchet,
         _pinned_num_ctx,
         clear_num_ctx_ratchet,
+        vram_safe_ctx_cap,
     )
 
 
@@ -64,6 +68,22 @@ def test_pin_never_resizes():
     assert c == 8_192 or c <= 8_192
 
 
+def test_vram_cap_8gb_is_32k():
+    eight = 8 * 1024 * 1024 * 1024
+    assert vram_safe_ctx_cap(262_144, vram_bytes=eight) == 32_768
+    assert vram_safe_ctx_cap(16_384, vram_bytes=eight) == 16_384
+    assert vram_safe_ctx_cap(262_144, vram_bytes=24 * 1024 * 1024 * 1024) == 262_144
+    assert vram_safe_ctx_cap(262_144, vram_bytes=0) == 32_768
+
+
+def test_pin_snaps_down_to_vram():
+    clear_num_ctx_ratchet()
+    _num_ctx_ratchet["http://localhost:11434|fat"] = 65_536
+    pinned = _pinned_num_ctx("http://localhost:11434", "fat", 262_144)
+    assert pinned <= vram_safe_ctx_cap(262_144)
+    assert pinned <= 32_768 or vram_safe_ctx_cap(262_144) >= 65_536
+
+
 def test_estimate_counts_images():
     clear_num_ctx_ratchet()
     msgs = [_Msg("hi", attachments=[_Att("image"), _Att("image")])]
@@ -75,5 +95,7 @@ def test_estimate_counts_images():
 if __name__ == "__main__":
     test_pin_matches_host_high_water()
     test_pin_never_resizes()
+    test_vram_cap_8gb_is_32k()
+    test_pin_snaps_down_to_vram()
     test_estimate_counts_images()
     print("ok")
