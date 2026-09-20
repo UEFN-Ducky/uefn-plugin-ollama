@@ -1,10 +1,10 @@
 {
   "id": "ollama",
   "kind": "plugin",
-  "version": "1.0.36",
+  "version": "1.0.37",
   "label": "Ollama",
   "description": "Local Ollama gateway for Settings → LLMs. Point at your Ollama server URL (default http://localhost:11434). Install from Store → Gateways, then enable to show the Ollama row under Providers & Keys.",
-  "min_app_version": "1.2.158",
+  "min_app_version": "1.2.160",
   "default_enabled": true,
   "secret_keys": [
     "ollama"
@@ -17,6 +17,22 @@
     "shell.boot": [
       {
         "entry": "ui/boot.js"
+      }
+    ],
+    "ui.panels": [
+      {
+        "id": "ollama-live",
+        "title": "Ollama",
+        "icon": "assets/icon.png",
+        "entry": "ui/live.html"
+      }
+    ],
+    "dock.panels": [
+      {
+        "id": "ollama-live",
+        "title": "Ollama",
+        "defaultSide": "left",
+        "ui": "panel:ollama-live"
       }
     ],
     "llm.providers": [
