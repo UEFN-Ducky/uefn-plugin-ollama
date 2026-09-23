@@ -310,15 +310,17 @@ def _show_many(base: str, names: list[str]) -> dict[str, dict[str, Any]]:
 
 def _fetch_ollama(base_url: str) -> list[ModelInfo]:
     """Names from /api/tags; vision/tools/thinking/ctx from /api/show."""
-    import httpx
-
     from .ollama_url import normalize_ollama_base
 
+    try:
+        from .local import read_tags
+    except ImportError:
+        from local import read_tags
+
     base = normalize_ollama_base(base_url)
-    r = httpx.get(f"{base}/api/tags", timeout=15.0, trust_env=False)
-    r.raise_for_status()
+    tag_rows = read_tags(base)
     names: list[str] = []
-    for item in r.json().get("models", []):
+    for item in tag_rows:
         name = (item.get("name") or "").strip()
         if name:
             names.append(name)

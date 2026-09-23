@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import shutil
 import threading
 import time
 import uuid
@@ -86,17 +85,12 @@ def _api_pull(job_id: str, base: str, model: str) -> None:
 
 
 def _ollama_bin() -> str:
-    found = shutil.which("ollama") or ""
-    if found:
-        return found
-    if os.name == "nt":
-        for cand in (
-            os.path.expandvars(r"%LOCALAPPDATA%\Programs\Ollama\ollama.exe"),
-            r"C:\Program Files\Ollama\ollama.exe",
-        ):
-            if cand and os.path.isfile(cand):
-                return cand
-    return "ollama"
+    try:
+        from .local import ollama_bin
+    except ImportError:
+        from local import ollama_bin
+
+    return ollama_bin() or "ollama"
 
 
 def _ps_quote(path: str) -> str:
