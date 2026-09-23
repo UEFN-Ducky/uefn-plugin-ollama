@@ -36,6 +36,7 @@
   };
   var pullTimer = 0;
   var liveTimer = 0;
+  var localRetry = 0;
   var pickerMount = null;
 
   function panelApi() {
@@ -137,6 +138,10 @@
       ".ollama-graph-head{display:flex;justify-content:space-between;gap:8px;font-size:11px;margin-bottom:4px}",
       ".ollama-graph-head span:last-child{color:var(--muted);font-variant-numeric:tabular-nums}",
       ".ollama-svg{width:100%;height:48px;display:block}",
+      ".ollama-split{display:grid;grid-template-columns:minmax(0,1fr) minmax(240px,.9fr);gap:16px;align-items:start}",
+      ".ollama-board p,.ollama-board a{color:inherit;text-decoration:none}",
+      ".ollama-error{margin:0 0 8px;color:var(--red,#f87171);font-size:13px;line-height:1.4}",
+      ".ollama-empty{margin:0;color:var(--muted);font-size:13px;line-height:1.45}",
       ".ollama-picker{padding:8px 10px 4px}",
       ".ollama-picker .ollama-faders{grid-template-columns:repeat(4,minmax(0,1fr))}",
     ].join("");
@@ -316,7 +321,7 @@
 
   function tuneBoard(st) {
     if (!state.selected || !st || !st.ok) {
-      return '<p class="general-tab-section-desc">Select a model on the right to open the mixer.</p>';
+      return '<p class="ollama-empty" data-no-translate>Select a model on the right to open the mixer.</p>';
     }
     return (
       '<div class="ollama-faders">' +
@@ -465,11 +470,13 @@
       })
       .join("");
     return (
-      (local.error ? '<p class="llms-provider-status-text is-fail">' + esc(local.error) + "</p>" : "") +
+      '<div class="ollama-split"><div class="ollama-split-mix">' +
+      tuneBoard(state.settings) +
+      '</div><div class="ollama-split-list">' +
+      (local.error ? '<p class="ollama-error" data-no-translate>' + esc(local.error) + "</p>" : "") +
       '<div class="ollama-table">' +
-      (rows || '<p class="general-tab-section-desc">Nothing pulled yet. Open Library to download.</p>') +
-      "</div>" +
-      tuneBoard(state.settings)
+      (rows || '<p class="ollama-empty" data-no-translate>Nothing pulled yet. Open Library to download.</p>') +
+      "</div></div></div>"
     );
   }
 
@@ -547,7 +554,7 @@
       '<button type="button" class="ollama-chip' +
       (state.order === "newest" ? " is-on" : "") +
       '" data-act="order" data-name="newest">Newest</button></div>' +
-      (state.error ? '<p class="llms-provider-status-text is-fail">' + esc(state.error) + "</p>" : "") +
+      (state.error ? '<p class="ollama-error" data-no-translate>' + esc(state.error) + "</p>" : "") +
       '<div class="ollama-table">' +
       (cards || (!state.busy ? '<p class="general-tab-section-desc">No models matched those filters.</p>' : "")) +
       "</div>"
@@ -676,6 +683,10 @@
       el.removeAttribute("id");
     }
     state.boardOpen = false;
+    if (localRetry) {
+      clearTimeout(localRetry);
+      localRetry = 0;
+    }
     if (liveTimer) {
       clearInterval(liveTimer);
       liveTimer = 0;
@@ -728,9 +739,16 @@
   }
 
   function refreshLocal() {
+    if (localRetry) {
+      clearTimeout(localRetry);
+      localRetry = 0;
+    }
     return call("local.list", {}).then(function (res) {
       state.local = res;
       render();
+      if (state.boardOpen && res && res.ok === false) {
+        localRetry = setTimeout(refreshLocal, 2000);
+      }
     });
   }
 

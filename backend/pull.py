@@ -53,6 +53,7 @@ def _api_pull(job_id: str, base: str, model: str) -> None:
             f"{base}/api/pull",
             json={"name": model, "stream": True},
             timeout=httpx.Timeout(connect=15.0, read=None, write=30.0, pool=15.0),
+            trust_env=False,
         ) as resp:
             resp.raise_for_status()
             for line in resp.iter_lines():

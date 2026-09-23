@@ -181,7 +181,7 @@ def ollama_model_info(base_url: str, model: str) -> dict[str, Any]:
     try:
         import httpx
 
-        r = httpx.post(f"{base}/api/show", json={"model": name}, timeout=10.0)
+        r = httpx.post(f"{base}/api/show", json={"model": name}, timeout=10.0, trust_env=False)
         r.raise_for_status()
         data = r.json()
         if isinstance(data, dict):
@@ -315,7 +315,7 @@ def _fetch_ollama(base_url: str) -> list[ModelInfo]:
     from .ollama_url import normalize_ollama_base
 
     base = normalize_ollama_base(base_url)
-    r = httpx.get(f"{base}/api/tags", timeout=15.0)
+    r = httpx.get(f"{base}/api/tags", timeout=15.0, trust_env=False)
     r.raise_for_status()
     names: list[str] = []
     for item in r.json().get("models", []):
