@@ -17,7 +17,10 @@ FAT = """You are the UEFN Ducky agent.
 ### core
 """ + ("- `illustrator_create_document` — make a doc\n" * 400) + """
 ## Enabled Store desktop plugins (live MCP status)
-- **Adobe** (`adobe`, 90 tools: illustrator_create_document, …)
+- **Blender** (`blender`, 6 tools: blender_get_scene_info, …)
+  - **READY** — socket localhost:9876 is up.
+## Enabled nested MCP servers
+- **UEFN** (`unreal__*`) — editor
 ## Available skill packs (lazy-loaded)
 - `uefn` [shipped] — UEFN
   - `core`
@@ -31,6 +34,9 @@ def test_slim_drops_catalog_keeps_rules():
     out = slim_local_system(FAT)
     assert "illustrator_create_document" not in out
     assert "unreal__PlaceDevice" not in out
+    assert "blender_get_scene_info" in out
+    assert "unreal__*" in out
+    assert "Do not invent `mcp__`" in out
     assert "ducky_find_tools" in out
     assert "## Rules" in out
     assert "Do the work." in out

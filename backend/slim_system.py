@@ -8,6 +8,12 @@ from __future__ import annotations
 
 import re
 
+_CALL_FLAT = (
+    "Call `ducky_call_tool` with those flat names (`blender_*`, `prefix__tool`). "
+    "Do not invent `mcp__`, `computer`, or `computer_use`.\n"
+)
+
+# Desktop plugin lines and nested `prefix__*` lines stay. Only the giant catalogs go.
 _SLIM_HEADINGS = (
     (
         "## Tool index",
@@ -16,18 +22,15 @@ _SLIM_HEADINGS = (
         "1. `ducky_find_tools(query)` — search by intent\n"
         "2. `ducky_get_tools(name=…)` or `pattern=…` — fetch schema\n"
         "3. `ducky_call_tool(name, arguments)` — run it\n"
-        "Floor tools are already in tools[].\n",
+        "Floor tools are already in tools[].\n"
+        + _CALL_FLAT,
     ),
     (
         "## MCP server instructions",
         "## MCP server instructions\n"
         "Floor tools are in tools[]. Other tools: "
-        "`ducky_find_tools` → `ducky_get_tools` → `ducky_call_tool`.\n",
-    ),
-    (
-        "## Enabled Store desktop plugins",
-        "## Enabled Store desktop plugins\n"
-        "READY tools work now. Use `ducky_find_tools` for schemas.\n",
+        "`ducky_find_tools` → `ducky_get_tools` → `ducky_call_tool`.\n"
+        + _CALL_FLAT,
     ),
     (
         "## Available skill packs",
