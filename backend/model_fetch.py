@@ -256,6 +256,8 @@ def model_from_show(
         id=name,
         display_name=name,
         supports_vision="vision" in caps,
+        supports_video=True if "video" in caps else None,
+        supports_audio=True if "audio" in caps else None,
         supports_tools="tools" in caps,
         context_limit=context_limit,
         price_in=0.0,
