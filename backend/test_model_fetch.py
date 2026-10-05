@@ -156,7 +156,7 @@ def test_media_support_from_capabilities_words() -> None:
     full = model_fetch.model_from_show("m:latest", {"capabilities": ["completion", "vision", "video", "audio"]})
     assert (full.supports_video, full.supports_audio, full.max_images) == (True, True, None)
     plain = model_fetch.model_from_show("m:latest", {"capabilities": ["completion", "vision"]})
-    assert (plain.supports_video, plain.supports_audio) == (False, False)
+    assert (plain.supports_video, plain.supports_audio) == (None, None)
     unknown = model_fetch.model_from_show("m:latest", {})
     assert (unknown.supports_video, unknown.supports_audio, unknown.max_images) == (None, None, None)
 
