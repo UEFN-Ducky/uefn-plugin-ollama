@@ -7,8 +7,12 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(os.path.abspath(__file__)).parents[1]
 APP = ROOT.parents[1] / "UEFN-Ducky-Release" / "ducky_app"
+for _name in ("UEFN-Ducky-Release", "UEFN-Ducky-video", "UEFN-Ducky"):
+    if (ROOT.parents[1] / _name / "ducky_app" / "backend" / "agent").is_dir():
+        APP = ROOT.parents[1] / _name / "ducky_app"
+        break
 if str(APP) not in sys.path:
     sys.path.insert(0, str(APP))
 
@@ -28,7 +32,17 @@ def _load_plugin_fetch():
     assert spec and spec.loader
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod
-    spec.loader.exec_module(mod)
+    # The plugin dir is itself a ``backend`` package; the host's must win while importing.
+    saved = {k: sys.modules.pop(k) for k in list(sys.modules) if k == "backend" or k.startswith("backend.")}
+    saved_path = list(sys.path)
+    sys.path[:] = [str(APP)] + [p for p in sys.path if os.path.abspath(p) != str(ROOT)]
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        sys.path[:] = saved_path
+        for k in [k for k in sys.modules if k == "backend" or k.startswith("backend.")]:
+            del sys.modules[k]
+        sys.modules.update(saved)
     return mod
 
 
@@ -137,9 +151,20 @@ def test_effective_context_limit_vram_caps_qwen() -> None:
     assert int(32768 * 0.65) == 21299
 
 
+def test_media_support_from_capabilities_words() -> None:
+    model_fetch = _load_plugin_fetch()
+    full = model_fetch.model_from_show("m:latest", {"capabilities": ["completion", "vision", "video", "audio"]})
+    assert (full.supports_video, full.supports_audio, full.max_images) == (True, True, None)
+    plain = model_fetch.model_from_show("m:latest", {"capabilities": ["completion", "vision"]})
+    assert (plain.supports_video, plain.supports_audio) == (False, False)
+    unknown = model_fetch.model_from_show("m:latest", {})
+    assert (unknown.supports_video, unknown.supports_audio, unknown.max_images) == (None, None, None)
+
+
 if __name__ == "__main__":
     test_fetch_models_uses_tags_only()
     test_show_payload_vision_from_api_only()
     test_enrich_thinking_only_when_capability()
     test_effective_context_limit_vram_caps_qwen()
+    test_media_support_from_capabilities_words()
     print("ok")
