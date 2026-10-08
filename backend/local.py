@@ -18,6 +18,9 @@ except ImportError:
     from ollama_url import normalize_ollama_base
 
 _SERVE_LOCK = threading.Lock()
+_SERVE_PROCESSES: dict[str, subprocess.Popen] = {}
+_SERVE_NEXT_TRY: dict[str, float] = {}
+_SERVE_RETRY_SECONDS = 30.0
 
 
 def format_bytes(n: int) -> str:
@@ -89,7 +92,7 @@ def _loopback(base: str) -> bool:
     return host in {"127.0.0.1", "localhost", "::1"}
 
 
-def _spawn_serve(binary: str) -> None:
+def _spawn_serve(binary: str) -> subprocess.Popen | None:
     kwargs: dict[str, Any] = {
         "args": [binary, "serve"],
         "stdin": subprocess.DEVNULL,
@@ -98,15 +101,18 @@ def _spawn_serve(binary: str) -> None:
         "close_fds": True,
     }
     if os.name == "nt":
-        flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-        extra = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        kwargs["creationflags"] = flags | extra
+        # DETACHED_PROCESS makes Windows ignore CREATE_NO_WINDOW.
+        kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
+        startup = subprocess.STARTUPINFO()
+        startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startup.wShowWindow = subprocess.SW_HIDE
+        kwargs["startupinfo"] = startup
     else:
         kwargs["start_new_session"] = True
     try:
-        subprocess.Popen(**kwargs)
+        return subprocess.Popen(**kwargs)
     except OSError:
-        pass
+        return None
 
 
 def ensure_local_server(base_url: str, *, wait_s: float = 8.0) -> bool:
@@ -120,8 +126,17 @@ def ensure_local_server(base_url: str, *, wait_s: float = 8.0) -> bool:
     if not binary:
         return False
     with _SERVE_LOCK:
-        if not api_version_ok(base, timeout=0.8):
-            _spawn_serve(binary)
+        if api_version_ok(base, timeout=0.8):
+            return True
+        process = _SERVE_PROCESSES.get(base)
+        now = time.monotonic()
+        # Callers join the readiness wait rather than launching another daemon.
+        # Bound failed launches too, including zero-wait status polling.
+        if (process is None or process.poll() is not None) and now >= _SERVE_NEXT_TRY.get(base, 0.0):
+            _SERVE_NEXT_TRY[base] = now + _SERVE_RETRY_SECONDS
+            process = _spawn_serve(binary)
+            if process is not None:
+                _SERVE_PROCESSES[base] = process
     deadline = time.monotonic() + max(0.0, wait_s)
     while time.monotonic() < deadline:
         if api_version_ok(base, timeout=0.8):
