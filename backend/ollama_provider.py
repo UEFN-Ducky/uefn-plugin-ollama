@@ -63,6 +63,19 @@ _ratchet_lock = threading.Lock()
 _num_ctx_ratchet: dict[str, int] = {}
 
 
+def _attach_reasoning(msg: dict[str, Any], m: ProviderMessage) -> None:
+    """Send a step's own reasoning back to the model.
+
+    Ollama's ``/v1`` reads ``reasoning`` on an assistant message into the model's
+    thinking (its own field name; unknown keys are ignored, ``reasoning_content``
+    among them). Without it a DeepSeek- or qwen-style thinking model sees its prior
+    tool calls with no rationale and re-derives the same analysis on every step —
+    "too much loop thinking about the same thing".
+    """
+    if (m.thinking or "").strip():
+        msg["reasoning"] = m.thinking
+
+
 def _think_extra(thinking_effort: str) -> dict[str, Any]:
     """Map Ducky thinking_effort → Ollama ``/v1`` ``reasoning_effort``.
 
@@ -335,28 +348,31 @@ class OllamaProvider:
                 )
                 continue
             if m.role == "assistant" and m.tool_calls:
-                out.append(
-                    {
-                        "role": "assistant",
-                        "content": m.content or None,
-                        "tool_calls": [
-                            {
-                                "id": tc.id,
-                                "type": "function",
-                                "function": {
-                                    "name": tc.name,
-                                    "arguments": json.dumps(tc.arguments),
-                                },
-                            }
-                            for tc in m.tool_calls
-                        ],
-                    }
-                )
+                msg: dict[str, Any] = {
+                    "role": "assistant",
+                    "content": m.content or None,
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.name,
+                                "arguments": json.dumps(tc.arguments),
+                            },
+                        }
+                        for tc in m.tool_calls
+                    ],
+                }
+                _attach_reasoning(msg, m)
+                out.append(msg)
                 continue
             if m.role == "user" and m.attachments:
                 out.append({"role": "user", "content": build_openai_user_content(m.content, m.attachments)})
                 continue
-            out.append({"role": m.role, "content": m.content})
+            msg = {"role": m.role, "content": m.content}
+            if m.role == "assistant":
+                _attach_reasoning(msg, m)
+            out.append(msg)
         return out
 
     async def stream_turn(
