@@ -1,6 +1,7 @@
 """Concurrent status requests must never open a burst of Ollama consoles."""
 import os
 import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
@@ -44,6 +45,23 @@ def test_failed_launch_has_retry_cooldown(monkeypatch, process):
     now[0] += 31
     assert not local.ensure_local_server("http://127.0.0.1:11434", wait_s=0)
     assert launches == ["ollama", "ollama"]
+
+
+def test_polls_share_one_http_client(monkeypatch):
+    made = []
+
+    class Client:
+        def __init__(self, **kwargs):
+            made.append(kwargs)
+
+        def get(self, url, timeout):
+            return SimpleNamespace(raise_for_status=lambda: None, json=lambda: {"models": [{"name": "m"}]})
+
+    monkeypatch.setattr(local, "_CLIENT", None)
+    monkeypatch.setitem(sys.modules, "httpx", SimpleNamespace(Client=Client))
+    for _ in range(5):
+        assert local._ps("http://127.0.0.1:11434") == [{"name": "m"}]
+    assert made == [{"trust_env": False}]
 
 
 def test_healthy_server_never_launches(monkeypatch):

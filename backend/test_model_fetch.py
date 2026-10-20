@@ -59,9 +59,11 @@ def test_fetch_models_uses_tags_only() -> None:
     }
     tags.raise_for_status = MagicMock()
     httpx = MagicMock()
-    httpx.get.return_value = tags
-    httpx.post.side_effect = AssertionError("/api/show must not run during list")
+    http = httpx.Client.return_value
+    http.get.return_value = tags
+    http.post.side_effect = AssertionError("/api/show must not run during list")
 
+    sys.modules.pop("ollama_gw.local", None)  # its shared client is built from this mock
     sys.modules["httpx"] = httpx
     os.environ["DUCKY_OLLAMA_SKIP_ENRICH"] = "1"
     try:
@@ -73,9 +75,10 @@ def test_fetch_models_uses_tags_only() -> None:
     assert [m.id for m in models] == ["qwen2.5:7b", "llama3.2:latest"]
     assert all(m.is_local for m in models)
     assert all(not m.thinking_menu for m in models)
-    httpx.get.assert_called_once()
-    assert httpx.get.call_args[0][0].endswith("/api/tags")
-    httpx.post.assert_not_called()
+    http.get.assert_called_once()
+    assert http.get.call_args[0][0].endswith("/api/tags")
+    http.post.assert_not_called()
+    httpx.Client.assert_called_once_with(trust_env=False)
 
 
 def test_show_payload_vision_from_api_only() -> None:

@@ -21,6 +21,8 @@ _SERVE_LOCK = threading.Lock()
 _SERVE_PROCESSES: dict[str, subprocess.Popen] = {}
 _SERVE_NEXT_TRY: dict[str, float] = {}
 _SERVE_RETRY_SECONDS = 30.0
+_CLIENT_LOCK = threading.Lock()
+_CLIENT: Any = None
 
 
 def format_bytes(n: int) -> str:
@@ -38,16 +40,23 @@ def format_bytes(n: int) -> str:
     return f"{raw} B"
 
 
-def _httpx():
-    import httpx
+def shared_client() -> Any:
+    """One HTTP client for every call to the Ollama server. A client per call built a new
+    SSL context (the whole CA store) each time: the stats tab's 2 s poll was half the
+    app's CPU."""
+    global _CLIENT
+    with _CLIENT_LOCK:
+        if _CLIENT is None:
+            import httpx
 
-    return httpx
+            _CLIENT = httpx.Client(trust_env=False)
+        return _CLIENT
 
 
 def api_version_ok(base_url: str, timeout: float = 3.0) -> bool:
     base = normalize_ollama_base(base_url)
     try:
-        r = _httpx().get(f"{base}/api/version", timeout=timeout, trust_env=False)
+        r = shared_client().get(f"{base}/api/version", timeout=timeout)
         return r.status_code < 400
     except Exception:
         return False
@@ -205,7 +214,7 @@ def disk_models(root: Path | None = None) -> list[dict[str, Any]]:
 
 
 def _tags(base: str) -> list[dict[str, Any]]:
-    r = _httpx().get(f"{base}/api/tags", timeout=15.0, trust_env=False)
+    r = shared_client().get(f"{base}/api/tags", timeout=15.0)
     r.raise_for_status()
     rows = r.json().get("models") or []
     return [row for row in rows if isinstance(row, dict)]
@@ -223,7 +232,7 @@ def read_tags(base: str) -> list[dict[str, Any]]:
 
 def _ps(base: str) -> list[dict[str, Any]]:
     try:
-        r = _httpx().get(f"{base}/api/ps", timeout=8.0, trust_env=False)
+        r = shared_client().get(f"{base}/api/ps", timeout=8.0)
         r.raise_for_status()
         rows = r.json().get("models") or []
         return [row for row in rows if isinstance(row, dict)]
@@ -308,9 +317,7 @@ def delete_model(base_url: str, name: str) -> dict[str, Any]:
         return {"ok": False, "error": "Model name required"}
     base = normalize_ollama_base(base_url)
     try:
-        r = _httpx().request(
-            "DELETE", f"{base}/api/delete", json={"name": model}, timeout=30.0, trust_env=False
-        )
+        r = shared_client().request("DELETE", f"{base}/api/delete", json={"name": model}, timeout=30.0)
         r.raise_for_status()
     except Exception as exc:
         return {"ok": False, "error": str(exc)}

@@ -38,6 +38,8 @@
   var CHANNEL = "uefn-plugin-ui";
   var samples = [];
   var live = null;
+  var hidden = false;
+  var busy = false;
 
   function call(method, params) {
     var id = crypto.randomUUID();
@@ -129,7 +131,9 @@
       (loaded || '<p style="color:var(--muted)">No model in VRAM.</p>');
   }
   function tick() {
-    return rpc("stats.live", {}).then(function (res) {
+    if (hidden || busy) return;
+    busy = true;
+    rpc("stats.live", {}).then(function (res) {
       live = res || { ok: false };
       if (live && live.ok && live.vram_total) {
         live.vram_pct = (100 * (live.vram_used || 0)) / live.vram_total;
@@ -139,12 +143,19 @@
     }).catch(function (err) {
       live = { ok: false, error: String(err && err.message ? err.message : err) };
       render();
+    }).then(function () {
+      busy = false;
     });
   }
   window.addEventListener("message", function (ev) {
     var d = ev.data;
     if (!d || d.channel !== CHANNEL || !d.event) return;
     if (d.event.type === "appearance_theme") applyTheme(d.event.vars);
+    // A hidden tab stays open: no stats polls until it is shown again.
+    if (d.event.type === "panel.visibility") {
+      hidden = !d.event.visible;
+      tick();
+    }
   });
   call("theme.get").then(function (res) {
     if (res && res.vars) applyTheme(res.vars);

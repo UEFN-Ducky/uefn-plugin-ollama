@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import fields
@@ -179,9 +178,12 @@ def ollama_model_info(base_url: str, model: str) -> dict[str, Any]:
 
     info: dict[str, Any] = {"context_length": None, "capabilities": [], "parameters": {}}
     try:
-        import httpx
+        try:
+            from .local import shared_client
+        except ImportError:
+            from local import shared_client
 
-        r = httpx.post(f"{base}/api/show", json={"model": name}, timeout=10.0, trust_env=False)
+        r = shared_client().post(f"{base}/api/show", json={"model": name}, timeout=10.0)
         r.raise_for_status()
         data = r.json()
         if isinstance(data, dict):
